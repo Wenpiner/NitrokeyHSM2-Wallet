@@ -151,6 +151,10 @@ cargo run --example demo    # walk through import and signing with a mock device
 
 The technical architecture is documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Chinese).
 
+## Security
+
+Found a vulnerability? Please report it privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
 ## License
 
 Released into the public domain under [The Unlicense](LICENSE). You may copy, modify, publish, sell, or redistribute it, closed-source or not, with no attribution and no need to keep the license notice.

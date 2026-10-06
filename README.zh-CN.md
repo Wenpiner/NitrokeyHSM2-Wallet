@@ -149,6 +149,10 @@ cargo run --example demo    # 用 Mock 设备演示完整的导入、签名流�
 
 技术架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
+## 安全问题反馈
+
+发现安全漏洞请按 [SECURITY.md](SECURITY.md#安全策略) 私下报告，不要提交公开 Issue。
+
 ## 开源协议
 
 本项目以 [The Unlicense](LICENSE) 发布到公有领域：你可以复制、修改、发布、商用、闭源再分发，无需署名，也无需保留许可声明。
