@@ -1,0 +1,21 @@
+# Rust 编译产物
+rust/target/
+/nitrokey-wallet
+
+# 本地钱包缓存（只含公钥与地址，但仍属于个人数据）
+wallet_cache.json
+*.json.tmp
+
+# Android
+android/**/build/
+android/.gradle/
+android/local.properties
+
+# 系统 / 编辑器
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# 本地 AI 助手配置
+.claude/

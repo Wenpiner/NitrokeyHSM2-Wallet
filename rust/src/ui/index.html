@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nitrokey HSM 2 硬件钱包</title>
+  <style>
+    :root[data-theme="dark"] {
+      --bg-page: #0a0c10; --bg-card: #12151c; --bg-card-hover: #191e28; --bg-inner: rgba(0, 0, 0, 0.4);
+      --border-color: #262c36; --border-focus: #4b5563;
+      --text-primary: #f3f4f6; --text-secondary: #9ca3af; --text-muted: #6b7280;
+      --accent: #ffffff; --accent-contrast: #000000; --tag-bg: rgba(255, 255, 255, 0.08);
+      --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.4);
+      --warn-bg: rgba(217, 119, 6, 0.12); --warn-border: rgba(217, 119, 6, 0.35); --warn-text: #fbbf24;
+      --err-bg: rgba(220, 38, 38, 0.12); --err-border: rgba(220, 38, 38, 0.4); --err-text: #f87171;
+      --ok-text: #34d399; --energy-color: #f59e0b; --bandwidth-color: #3b82f6;
+    }
+    :root[data-theme="light"] {
+      --bg-page: #f8fafc; --bg-card: #ffffff; --bg-card-hover: #f1f5f9; --bg-inner: #f1f5f9;
+      --border-color: #e2e8f0; --border-focus: #94a3b8;
+      --text-primary: #0f172a; --text-secondary: #475569; --text-muted: #94a3b8;
+      --accent: #0f172a; --accent-contrast: #ffffff; --tag-bg: rgba(15, 23, 42, 0.06);
+      --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.06);
+      --warn-bg: rgba(245, 158, 11, 0.1); --warn-border: rgba(245, 158, 11, 0.3); --warn-text: #b45309;
+      --err-bg: rgba(220, 38, 38, 0.08); --err-border: rgba(220, 38, 38, 0.3); --err-text: #b91c1c;
+      --ok-text: #059669; --energy-color: #d97706; --bandwidth-color: #2563eb;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      background: var(--bg-page); color: var(--text-primary);
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden; font-size: 13px;
+      user-select: none;
+    }
+    input, .selectable, .mono { user-select: text; }
+    .mono { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    button { font-family: inherit; }
+    :focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+
+    header {
+      height: 60px; flex-shrink: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-card);
+      display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+    .brand-icon {
+      width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: var(--accent-contrast);
+      display: flex; align-items: center; justify-content: center; font-weight: 800;
+    }
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    .capsule {
+      display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 600; border: 1px solid var(--border-color); color: var(--text-secondary);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+    .dot.ok { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.6); }
+    .dot.warn { background: #f59e0b; }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 7px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;
+      border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);
+      transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+    }
+    .btn:hover:not(:disabled) { background: var(--bg-card-hover); border-color: var(--border-focus); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .btn.primary:hover:not(:disabled) { background: var(--accent); opacity: 0.88; }
+    .btn.sm { padding: 4px 10px; font-size: 11px; border-radius: 6px; }
+    .btn.icon { padding: 5px 8px; }
+
+    main { flex: 1; display: grid; grid-template-columns: 250px 1fr; min-height: 0; }
+    aside {
+      border-right: 1px solid var(--border-color); background: var(--bg-card);
+      padding: 16px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+    }
+    .aside-title { font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 0.6px; padding: 0 4px; }
+    .slot-card {
+      border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; cursor: pointer;
+      background: var(--bg-card); transition: background 0.15s, border-color 0.15s; text-align: left;
+      width: 100%; color: inherit; font: inherit;
+    }
+    #slotList { display: flex; flex-direction: column; gap: 10px; }
+    .slot-card:hover { background: var(--bg-card-hover); }
+    .slot-card.active { border-color: var(--accent); }
+    .slot-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .slot-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .slot-tags { display: flex; align-items: center; gap: 4px; }
+    .slot-del {
+      border: 0; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px;
+      line-height: 1; padding: 3px 5px; border-radius: 6px; opacity: 0.55; transition: opacity 0.15s, background 0.15s;
+    }
+    .slot-card:hover .slot-del, .slot-del:focus-visible { opacity: 1; }
+    .slot-del:hover { background: var(--err-bg); color: var(--err-text); }
+    .btn.danger { background: var(--err-text); border-color: var(--err-text); color: #fff; }
+    .slot-name { font-weight: 700; font-size: 13px; }
+    .tag { font-size: 10px; padding: 2px 7px; border-radius: 10px; background: var(--tag-bg); color: var(--text-secondary); font-weight: 600; }
+    .slot-addr { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+    .slot-bal { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+    .slot-bal b { color: var(--text-primary); font-weight: 600; }
+    .slot-empty { font-size: 12px; color: var(--text-muted); }
+    .slot-add { border-style: dashed; }
+    .slot-add .slot-name { display: block; margin-bottom: 4px; }
+    .aside-foot { margin-top: auto; font-size: 11px; color: var(--text-muted); line-height: 1.6; padding: 0 4px; }
+
+    .content { overflow-y: auto; padding: 20px 24px 32px; display: flex; flex-direction: column; gap: 16px; }
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px;
+      box-shadow: var(--shadow-card); padding: 20px;
+    }
+    .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .card-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .muted { color: var(--text-muted); }
+    .secondary { color: var(--text-secondary); }
+
+    .seg { display: inline-flex; border: 1px solid var(--border-color); border-radius: 8px; padding: 2px; background: var(--bg-inner); }
+    .seg button {
+      border: 0; background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 600;
+      padding: 5px 14px; border-radius: 6px; cursor: pointer;
+    }
+    .seg button.on { background: var(--bg-card); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+
+    .addr-row {
+      margin-top: 14px; display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+      background: var(--bg-inner); border-radius: 8px; font-size: 12px;
+    }
+    .addr-row .mono { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+    .balance-main { margin-top: 18px; display: flex; align-items: baseline; gap: 8px; }
+    .balance-main .num { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+    .balance-main .unit { font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+
+    .assets { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+    .asset {
+      border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; background: var(--bg-inner);
+    }
+    .asset-label { font-size: 11px; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; display: flex; justify-content: space-between; }
+    .asset-value { font-size: 16px; font-weight: 700; }
+    .meter { height: 6px; border-radius: 3px; background: var(--tag-bg); margin-top: 8px; overflow: hidden; }
+    .meter > i { display: block; height: 100%; border-radius: 3px; }
+
+    .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .transfer {
+      margin-top: 16px; border-top: 1px dashed var(--border-color); padding-top: 16px;
+      display: none; flex-direction: column; gap: 12px;
+    }
+    .transfer.open { display: flex; }
+    .field label { display: block; font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px; }
+    .field input {
+      width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border-color);
+      background: var(--bg-inner); color: var(--text-primary); font-size: 13px; outline: none;
+    }
+    .field input:focus { border-color: var(--border-focus); }
+    .field .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+    .amount-wrap { display: flex; gap: 6px; }
+    .amount-wrap input { flex: 1; }
+
+    .notice {
+      padding: 10px 12px; border-radius: 8px; font-size: 12px; line-height: 1.6;
+      background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text);
+    }
+    .notice.err { background: var(--err-bg); border-color: var(--err-border); color: var(--err-text); }
+    .notice.info { background: var(--bg-inner); border-color: var(--border-color); color: var(--text-secondary); }
+    .notice:empty { display: none; }
+
+    .kv { display: grid; grid-template-columns: 90px 1fr; gap: 6px 10px; font-size: 12px; }
+    .kv dt { color: var(--text-muted); }
+    .kv dd { word-break: break-all; }
+
+    .empty {
+      padding: 48px 20px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px;
+    }
+    .empty .big { font-size: 34px; opacity: 0.6; }
+    .empty h3 { font-size: 16px; }
+    .empty p { color: var(--text-secondary); font-size: 12px; max-width: 380px; line-height: 1.7; }
+
+    .tx-list { margin-top: 12px; display: flex; flex-direction: column; }
+    .tx {
+      display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center;
+      padding: 10px 6px; border-bottom: 1px solid var(--border-color); cursor: pointer; border-radius: 6px;
+    }
+    .tx:last-child { border-bottom: 0; }
+    .tx:hover { background: var(--bg-card-hover); }
+    .tx-icon {
+      width: 30px; height: 30px; border-radius: 50%; background: var(--tag-bg);
+      display: flex; align-items: center; justify-content: center; font-weight: 700;
+    }
+    .tx-icon.in { color: var(--ok-text); }
+    .tx-main { min-width: 0; }
+    .tx-title { font-size: 12px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+    .tx-sub { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tx-amt { font-weight: 700; font-size: 13px; text-align: right; white-space: nowrap; }
+    .tx-amt.in { color: var(--ok-text); }
+    .badge-fail { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: var(--err-bg); color: var(--err-text); }
+    .placeholder { padding: 22px 0; text-align: center; color: var(--text-muted); font-size: 12px; }
+
+    .skeleton {
+      display: inline-block; height: 12px; width: 70px; border-radius: 4px; vertical-align: middle;
+      background: linear-gradient(90deg, var(--tag-bg) 25%, var(--bg-card-hover) 50%, var(--tag-bg) 75%);
+      background-size: 200% 100%; animation: shimmer 1.2s infinite;
+    }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    .spin { display: inline-block; animation: rot 0.8s linear infinite; }
+    @keyframes rot { to { transform: rotate(360deg); } }
+
+    .modal-bg {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: none;
+      align-items: center; justify-content: center; z-index: 50; padding: 16px;
+    }
+    .modal-bg.open { display: flex; }
+    .modal {
+      width: 100%; max-width: 440px; max-height: calc(100vh - 32px); overflow-y: auto;
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 22px;
+      display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+    }
+    .modal h2 { font-size: 16px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+    #toast {
+      position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); opacity: 0;
+      background: var(--accent); color: var(--accent-contrast); padding: 9px 16px; border-radius: 8px;
+      font-size: 12px; font-weight: 600; pointer-events: none; transition: all 0.25s; z-index: 100; max-width: 80vw;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    @media (max-width: 720px) {
+      main { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--border-color); flex-direction: row; overflow-x: auto; }
+      #slotList { flex-direction: row; }
+      .slot-card { min-width: 200px; }
+      .aside-title, .aside-foot { display: none; }
+      .content { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><div class="brand-icon">N</div><span>Nitrokey HSM 2 钱包</span></div>
+    <div class="header-actions">
+      <span class="capsule" id="statusCapsule"><span class="dot" id="statusDot"></span><span id="statusText">加载中</span></span>
+      <button class="btn" id="syncBtn" onclick="openAuth('import')" title="连接设备，按 标签 + CKA_ID 重新读取当前账户的公钥">🔐 刷新设备钱包</button>
+      <button class="btn icon" onclick="toggleTheme()" aria-label="切换主题"><span id="themeIcon">🌙</span></button>
+    </div>
+  </header>
+
+  <main>
+    <aside aria-label="账户列表">
+      <div class="aside-title">账户（按 CKA_ID）</div>
+      <div id="slotList"></div>
+      <div class="aside-foot">公钥缓存在本地，设备未插入时也可查看余额。签名时才需要连接设备并输入 PIN。</div>
+    </aside>
+    <section class="content" id="content"></section>
+  </main>
+
+  <!-- PIN / Label 认证弹窗（同步、创建、签名共用） -->
+  <div class="modal-bg" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <div class="modal">
+      <h2 id="authTitle"></h2>
+      <div class="notice" id="authNotice"></div>
+      <dl class="kv" id="authSummary"></dl>
+      <div class="field">
+        <label for="authLabel">密钥标签 (Key Label)</label>
+        <input type="password" id="authLabel" autocomplete="off" spellcheck="false" />
+        <div class="hint">以密码形式输入，不会保存也不会显示</div>
+      </div>
+      <div class="field" id="authKeyIdField">
+        <label for="authKeyId">CKA_ID（0-254）</label>
+        <input type="text" id="authKeyId" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="例如 20 或 0x14" />
+        <div class="hint" id="authKeyIdHint">十进制，或 0x 开头的十六进制（pkcs11-tool --id 使用十六进制）</div>
+      </div>
+      <div class="field">
+        <label for="authPin">设备 PIN</label>
+        <input type="password" id="authPin" autocomplete="off" spellcheck="false" />
+        <div class="hint">PIN 连续输错 3 次设备将被锁定</div>
+      </div>
+      <div class="notice err" id="authError"></div>
+      <div class="modal-actions">
+        <button class="btn" id="authCancel" onclick="closeAuth()">取消</button>
+        <button class="btn primary" id="authSubmit" onclick="submitAuth()">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 签名结果 / 广播弹窗 -->
+  <div class="modal-bg" id="resultModal" role="dialog" aria-modal="true" aria-labelledby="resultTitle">
+    <div class="modal">
+      <h2 id="resultTitle">交易已签名</h2>
+      <div class="notice info">签名已完成，设备会话已关闭。现在可以拔出 Nitrokey。请核对信息后再广播。</div>
+      <dl class="kv" id="resultSummary"></dl>
+      <div class="notice err" id="resultError"></div>
+      <div class="modal-actions">
+        <button class="btn" id="resultCopy" onclick="copyRawTx()">复制原始交易</button>
+        <button class="btn" onclick="closeResult()">关闭</button>
+        <button class="btn primary" id="broadcastBtn" onclick="broadcast()">广播交易</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 移除账户确认弹窗（只删本地缓存） -->
+  <div class="modal-bg" id="removeModal" role="dialog" aria-modal="true" aria-labelledby="removeTitle">
+    <div class="modal">
+      <h2 id="removeTitle">移除账户</h2>
+      <div class="notice info">只删除本机缓存的公钥和地址，<b>不会删除 Nitrokey 里的私钥</b>，链上资产不受影响。
+        之后插入设备，点击「刷新设备钱包 / 导入已有密钥」即可恢复。</div>
+      <dl class="kv" id="removeSummary"></dl>
+      <div class="notice err" id="removeError"></div>
+      <div class="modal-actions">
+        <button class="btn" id="removeCancel" onclick="closeRemove()">取消</button>
+        <button class="btn danger" id="removeSubmit" onclick="submitRemove()">移除</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+// =====================================================================
+// 常量
+// =====================================================================
+const ETH_RPC = 'https://ethereum-rpc.publicnode.com';
+const BLOCKSCOUT = 'https://eth.blockscout.com/api/v2';
+const TRONGRID = 'https://api.trongrid.io';
+const ETH_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
+const TRON_USDT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
+const MAX_KEY_ID = 254;               // CKA_ID 单字节，0-254
+const TRON_FEE_LIMIT_SUN = 50000000n;   // 与后端 fee_limit 一致
+const ETH_MAX_GAS_PRICE = 500n * 10n ** 9n; // 与后端上限一致
+
+// =====================================================================
+// 工具：SHA-256 / Base58 / TRON 地址 / 金额
+// =====================================================================
+const SHA_K = (() => {
+  const k = []; let n = 2;
+  while (k.length < 64) {
+    let prime = true;
+    for (let i = 2; i * i <= n; i++) if (n % i === 0) { prime = false; break; }
+    if (prime) k.push((Math.cbrt(n) % 1) * 2 ** 32 >>> 0);
+    n++;
+  }
+  return k;
+})();
+
+function sha256(bytes) {
+  const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const len = bytes.length, total = ((len + 9 + 63) >> 6) << 6;
+  const buf = new Uint8Array(total);
+  buf.set(bytes); buf[len] = 0x80;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(total - 4, (len * 8) >>> 0); dv.setUint32(total - 8, Math.floor(len / 0x20000000));
+  const w = new Uint32Array(64), rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < total; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i-15], 7) ^ rotr(w[i-15], 18) ^ (w[i-15] >>> 3);
+      const s1 = rotr(w[i-2], 17) ^ rotr(w[i-2], 19) ^ (w[i-2] >>> 10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = H;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + SHA_K[i] + w[i]) >>> 0;
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    [a, b, c, d, e, f, g, h].forEach((v, i) => { H[i] = (H[i] + v) >>> 0; });
+  }
+  const out = new Uint8Array(32), odv = new DataView(out.buffer);
+  H.forEach((v, i) => odv.setUint32(i * 4, v));
+  return out;
+}
+
+const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function b58encode(bytes) {
+  let n = 0n;
+  for (const b of bytes) n = n * 256n + BigInt(b);
+  let s = '';
+  while (n > 0n) { s = B58[Number(n % 58n)] + s; n /= 58n; }
+  for (const b of bytes) { if (b !== 0) break; s = '1' + s; }
+  return s;
+}
+function b58decode(str) {
+  let n = 0n;
+  for (const ch of str) {
+    const i = B58.indexOf(ch);
+    if (i < 0) throw new Error('Base58 字符无效');
+    n = n * 58n + BigInt(i);
+  }
+  const out = [];
+  while (n > 0n) { out.unshift(Number(n % 256n)); n /= 256n; }
+  for (const ch of str) { if (ch !== '1') break; out.unshift(0); }
+  return new Uint8Array(out);
+}
+const hexToBytes = h => new Uint8Array((h.replace(/^0x/, '').match(/../g) || []).map(x => parseInt(x, 16)));
+const bytesToHex = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+
+/** TRON Base58Check → 21 字节 hex (41...)，校验和错误时抛出 */
+function tronToHex(addr) {
+  const raw = b58decode(addr);
+  if (raw.length !== 25) throw new Error('TRON 地址长度错误');
+  const payload = raw.slice(0, 21), sum = sha256(sha256(payload)).slice(0, 4);
+  if (sum.some((b, i) => b !== raw[21 + i])) throw new Error('TRON 地址校验和错误');
+  if (payload[0] !== 0x41) throw new Error('TRON 地址需以 T 开头');
+  return bytesToHex(payload);
+}
+function hexToTron(hex) {
+  const payload = hexToBytes(hex);
+  if (payload.length !== 21) return hex;
+  const sum = sha256(sha256(payload)).slice(0, 4);
+  const full = new Uint8Array(25); full.set(payload); full.set(sum, 21);
+  return b58encode(full);
+}
+function isTronAddr(a) { try { tronToHex(a); return true; } catch { return false; } }
+
+/** 字符串金额 → 最小单位 BigInt（与后端 parse_amount 规则一致） */
+function parseUnits(input, decimals) {
+  const s = String(input).trim();
+  if (!/^(0|[1-9]\d*)(\.\d*)?$|^\.\d+$/.test(s)) throw new Error('金额格式无效');
+  const [ip, fp = ''] = s.split('.');
+  if (fp.length > decimals) throw new Error(`小数位不能超过 ${decimals} 位`);
+  const v = BigInt((ip || '0') + fp.padEnd(decimals, '0'));
+  if (v <= 0n) throw new Error('金额必须大于 0');
+  return v;
+}
+function formatUnits(v, decimals, maxFrac = 6) {
+  v = BigInt(v);
+  const neg = v < 0n; if (neg) v = -v;
+  const base = 10n ** BigInt(decimals);
+  const ip = v / base;
+  let fp = (v % base).toString().padStart(decimals, '0').slice(0, maxFrac).replace(/0+$/, '');
+  const ipStr = ip.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (neg ? '-' : '') + ipStr + (fp ? '.' + fp : '');
+}
+const shortAddr = a => a ? `${a.slice(0, 8)}…${a.slice(-6)}` : '';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function fmtTime(ms) {
+  if (!ms) return '';
+  const d = new Date(ms), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+// =====================================================================
+// 网络
+// =====================================================================
+async function fetchJson(url, opts = {}, timeoutMs = 25000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...opts, signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? '请求超时' : (e.message || '网络错误'));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+let rpcId = 1;
+async function ethRpc(method, params) {
+  const r = await fetchJson(ETH_RPC, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
+  }, 15000);
+  if (r.error) throw new Error(r.error.message || 'RPC 错误');
+  return r.result;
+}
+// TronGrid 无 API Key 时对突发并发请求返回 429：所有 TRON 请求串行排队、间隔发出，429 时退避重试
+const TRON_GAP_MS = 250;
+let tronQueue = Promise.resolve();
+function tronFetch(url, opts = {}, timeoutMs = 15000) {
+  const run = async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fetchJson(url, opts, timeoutMs);
+      } catch (e) {
+        if (e.message !== 'HTTP 429' || attempt >= 3) throw new Error(e.message === 'HTTP 429' ? 'TronGrid 请求过于频繁，请稍后刷新' : e.message);
+        await sleep(800 * 2 ** attempt);
+      }
+    }
+  };
+  const p = tronQueue.then(run);
+  tronQueue = p.catch(() => {}).then(() => sleep(TRON_GAP_MS));
+  return p;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const tronPost = (path, body) => tronFetch(TRONGRID + path, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+// 两个子请求互不拖累：都失败才报错，单个失败返回部分结果并标记 partial
+async function settleBoth(a, b) {
+  const [ra, rb] = await Promise.allSettled([a, b]);
+  if (ra.status === 'rejected' && rb.status === 'rejected') throw ra.reason;
+  return { a: ra.value, b: rb.value, partial: ra.status === 'rejected' || rb.status === 'rejected' };
+}
+
+const pad32 = hex => hex.replace(/^0x/, '').toLowerCase().padStart(64, '0');
+const erc20BalanceData = addr => '0x70a08231' + pad32(addr);
+const erc20TransferData = (to, amt) => '0xa9059cbb' + pad32(to) + amt.toString(16).padStart(64, '0');
+
+// ---------------- 余额 / 资源 ----------------
+async function loadEthOverview(addr) {
+  const [eth, usdt] = await Promise.all([
+    ethRpc('eth_getBalance', [addr, 'latest']),
+    ethRpc('eth_call', [{ to: ETH_USDT, data: erc20BalanceData(addr) }, 'latest']),
+  ]);
+  return { native: BigInt(eth), usdt: BigInt(usdt === '0x' ? 0 : usdt) };
+}
+
+async function loadTronOverview(addr) {
+  const [acc, res] = await Promise.all([
+    tronFetch(`${TRONGRID}/v1/accounts/${addr}`),
+    tronPost('/wallet/getaccountresource', { address: addr, visible: true }),
+  ]);
+  const a = (acc.data || [])[0];
+  let usdt = 0n;
+  for (const t of (a?.trc20 || [])) if (t[TRON_USDT] !== undefined) usdt = BigInt(t[TRON_USDT]);
+  const freeNet = (res.freeNetLimit || 0) - (res.freeNetUsed || 0);
+  const stakeNet = (res.NetLimit || 0) - (res.NetUsed || 0);
+  return {
+    activated: !!a,
+    native: BigInt(a?.balance || 0),
+    usdt,
+    energyLimit: res.EnergyLimit || 0,
+    energyAvail: Math.max(0, (res.EnergyLimit || 0) - (res.EnergyUsed || 0)),
+    netLimit: (res.freeNetLimit || 0) + (res.NetLimit || 0),
+    netAvail: Math.max(0, freeNet) + Math.max(0, stakeNet),
+    freeNetAvail: Math.max(0, freeNet),
+  };
+}
+
+// ---------------- 最近交易 ----------------
+async function loadEthTxs(addr) {
+  const me = addr.toLowerCase();
+  // Blockscout 按 token 过滤的查询偶尔很慢，放宽超时；任一失败仍展示另一部分
+  const { a: txs, b: tokens, partial } = await settleBoth(
+    fetchJson(`${BLOCKSCOUT}/addresses/${addr}/transactions`, {}, 40000),
+    fetchJson(`${BLOCKSCOUT}/addresses/${addr}/token-transfers?type=ERC-20&token=${ETH_USDT}`, {}, 40000),
+  );
+  const list = [];
+  for (const t of (txs?.items || [])) {
+    if (!t.value || t.value === '0') continue;
+    list.push({
+      hash: t.hash, ts: Date.parse(t.timestamp), asset: 'ETH',
+      from: t.from?.hash || '', to: t.to?.hash || '', amount: BigInt(t.value), decimals: 18,
+      failed: t.status && t.status !== 'ok',
+    });
+  }
+  for (const t of (tokens?.items || [])) {
+    list.push({
+      hash: t.transaction_hash, ts: Date.parse(t.timestamp), asset: 'USDT',
+      from: t.from?.hash || '', to: t.to?.hash || '',
+      amount: BigInt(t.total?.value || 0), decimals: Number(t.total?.decimals || 6), failed: false,
+    });
+  }
+  const out = list.map(x => ({ ...x, dir: dirOf(x.from.toLowerCase(), x.to.toLowerCase(), me) }))
+    .sort((a, b) => b.ts - a.ts).slice(0, 5);
+  out.partial = partial;
+  return out;
+}
+
+async function loadTronTxs(addr) {
+  const meHex = tronToHex(addr);
+  const { a: txs, b: trc20, partial } = await settleBoth(
+    tronFetch(`${TRONGRID}/v1/accounts/${addr}/transactions?limit=30&only_confirmed=true`),
+    tronFetch(`${TRONGRID}/v1/accounts/${addr}/transactions/trc20?limit=10&contract_address=${TRON_USDT}`),
+  );
+  const list = [];
+  for (const t of (txs?.data || [])) {
+    const c = t.raw_data?.contract?.[0];
+    if (c?.type !== 'TransferContract') continue;
+    const v = c.parameter?.value || {};
+    const fromHex = String(v.owner_address || '').toLowerCase(), toHex = String(v.to_address || '').toLowerCase();
+    list.push({
+      hash: t.txID, ts: t.block_timestamp, asset: 'TRX',
+      from: hexToTron(fromHex), to: hexToTron(toHex), amount: BigInt(v.amount || 0), decimals: 6,
+      failed: (t.ret?.[0]?.contractRet || 'SUCCESS') !== 'SUCCESS',
+      dir: dirOf(fromHex, toHex, meHex),
+    });
+  }
+  for (const t of (trc20?.data || [])) {
+    list.push({
+      hash: t.transaction_id, ts: t.block_timestamp, asset: 'USDT',
+      from: t.from, to: t.to, amount: BigInt(t.value || 0), decimals: Number(t.token_info?.decimals || 6),
+      failed: false, dir: dirOf(t.from, t.to, addr),
+    });
+  }
+  const out = list.sort((a, b) => b.ts - a.ts).slice(0, 5);
+  out.partial = partial;
+  return out;
+}
+function dirOf(from, to, me) { return from === me && to === me ? 'self' : (from === me ? 'out' : 'in'); }
+// =====================================================================
+// 状态
+// =====================================================================
+const S = {
+  wallet: null,      // 后端返回的 WalletView（仅公钥派生的地址）
+  keyId: null,      // 当前选中账户的 CKA_ID；null 表示「添加账户」页
+  chain: 'ETH',
+  overview: {},      // `${chain}:${addr}` -> { status, data, error, seq, at }
+  txs: {},           // `${chain}:${addr}` -> { status, list, error, seq }
+  asset: 'ETH',
+  pending: null,     // 等待签名的转账参数
+  authMode: null,
+  busy: false,
+  signed: null,
+};
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+const account = id => id === null ? undefined : (S.wallet?.accounts || []).find(a => a.key_id === id);
+const fmtId = id => `${id} (0x${id.toString(16).padStart(2, '0')})`;
+const addrOf = (acc, chain) => chain === 'ETH' ? acc.eth_address : acc.tron_address;
+const nativeOf = chain => chain === 'ETH' ? 'ETH' : 'TRX';
+const nativeDecimals = chain => chain === 'ETH' ? 18 : 6;
+
+async function refreshEntry(map, key, loader, force, ttl) {
+  const cur = map[key];
+  if (!force && cur && (cur.status === 'loading' || (cur.status === 'ok' && Date.now() - cur.at < ttl))) return;
+  const seq = (cur?.seq || 0) + 1;
+  map[key] = { ...cur, status: 'loading', seq };
+  renderData();
+  try {
+    const data = await loader();
+    if (map[key].seq !== seq) return;
+    map[key] = { status: 'ok', data, at: Date.now(), seq };
+  } catch (e) {
+    if (map[key].seq !== seq) return;
+    map[key] = { status: 'err', data: cur?.data, error: e.message, seq };
+  }
+  renderData();
+}
+function refreshOverview(chain, addr, force = false) {
+  return refreshEntry(S.overview, `${chain}:${addr}`,
+    () => chain === 'ETH' ? loadEthOverview(addr) : loadTronOverview(addr), force, 60000);
+}
+function refreshTxs(force = false) {
+  const acc = account(S.keyId);
+  if (!acc) return;
+  const chain = S.chain, addr = addrOf(acc, chain);
+  return refreshEntry(S.txs, `${chain}:${addr}`,
+    () => chain === 'ETH' ? loadEthTxs(addr) : loadTronTxs(addr), force, 60000);
+}
+function refreshAll(force = false) {
+  for (const acc of (S.wallet?.accounts || [])) refreshOverview(S.chain, addrOf(acc, S.chain), force);
+  refreshTxs(force);
+}
+// =====================================================================
+// 渲染
+// =====================================================================
+function renderHeader() {
+  const dot = document.getElementById('statusDot'), text = document.getElementById('statusText');
+  if (!window.ipc) { dot.className = 'dot warn'; text.textContent = '预览模式（无后端）'; return; }
+  if (!S.wallet) { dot.className = 'dot warn'; text.textContent = '未同步设备'; return; }
+  dot.className = 'dot ok';
+  text.textContent = `${S.wallet.device_name} · 同步于 ${fmtTime(S.wallet.last_sync_timestamp * 1000)}`;
+}
+
+function renderSlots() {
+  let html = '';
+  for (const acc of (S.wallet?.accounts || [])) {
+    const id = acc.key_id, on = id === S.keyId;
+    const addr = addrOf(acc, S.chain), ov = S.overview[`${S.chain}:${addr}`], n = nativeOf(S.chain);
+    let bal;
+    if (ov?.data) {
+      bal = `<b>${formatUnits(ov.data.native, nativeDecimals(S.chain), 4)}</b> ${n}<br><b>${formatUnits(ov.data.usdt, 6, 2)}</b> USDT`;
+    } else if (ov?.status === 'err') {
+      bal = `<span class="muted">余额获取失败</span>`;
+    } else {
+      bal = `<span class="skeleton"></span><br><span class="skeleton" style="width:50px"></span>`;
+    }
+    html += `<div class="slot-card${on ? ' active' : ''}" role="button" tabindex="0" data-key="${id}" aria-pressed="${on}">
+      <div class="slot-head"><span class="slot-name">${esc(acc.account_name)}</span>
+        <span class="slot-tags"><span class="tag" title="CKA_ID">ID ${id}</span>
+        <button class="slot-del" data-remove="${id}" title="移除本地缓存" aria-label="移除 ID ${id} 账户">✕</button></span></div>
+      <div class="slot-addr mono">${esc(shortAddr(addr))}</div>
+      <div class="slot-bal">${bal}</div></div>`;
+  }
+  const addOn = S.keyId === null;
+  html += `<div class="slot-card slot-add${addOn ? ' active' : ''}" role="button" tabindex="0" data-key="add" aria-pressed="${addOn}">
+    <span class="slot-name">＋ 添加账户</span><div class="slot-empty">导入已有密钥 / 创建新密钥</div></div>`;
+  document.getElementById('slotList').innerHTML = html;
+}
+
+// 账户列表：点击选择 / ✕ 移除（事件委托，避免内联 onclick 嵌套冒泡）
+const keyOfCard = el => el.dataset.key === 'add' ? null : Number(el.dataset.key);
+document.getElementById('slotList').addEventListener('click', e => {
+  const del = e.target.closest('[data-remove]');
+  if (del) { e.stopPropagation(); openRemove(Number(del.dataset.remove)); return; }
+  const card = e.target.closest('[data-key]');
+  if (card) selectAccount(keyOfCard(card));
+});
+document.getElementById('slotList').addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.slot-card')) {
+    e.preventDefault(); selectAccount(keyOfCard(e.target));
+  }
+});
+
+// =====================================================================
+// 移除账户（仅本地缓存）
+// =====================================================================
+let removeTarget = null;
+function openRemove(id) {
+  const acc = account(id);
+  if (!acc || S.busy) return;
+  removeTarget = id;
+  document.getElementById('removeTitle').textContent = `移除账户 · ID ${fmtId(id)}`;
+  document.getElementById('removeSummary').innerHTML =
+    `<dt>账户</dt><dd>${esc(acc.account_name)}</dd>
+     <dt>CKA_ID</dt><dd class="mono">${fmtId(id)}</dd>
+     <dt>ETH 地址</dt><dd class="mono">${esc(acc.eth_address)}</dd>
+     <dt>TRON 地址</dt><dd class="mono">${esc(acc.tron_address)}</dd>`;
+  document.getElementById('removeError').textContent = '';
+  const b = document.getElementById('removeSubmit');
+  b.disabled = false; b.textContent = '移除';
+  document.getElementById('removeModal').classList.add('open');
+  document.getElementById('removeCancel').focus();
+}
+function closeRemove() {
+  document.getElementById('removeModal').classList.remove('open');
+  removeTarget = null;
+}
+function submitRemove() {
+  if (removeTarget === null) return;
+  const b = document.getElementById('removeSubmit');
+  b.disabled = true; b.textContent = '移除中…';
+  window.ipc.postMessage(JSON.stringify({ action: 'remove_account', key_id: removeTarget }));
+}
+window.onAccountRemoved = function (res) {
+  if (!res?.ok) {
+    document.getElementById('removeError').textContent = '移除失败：' + (res?.error || '未知错误');
+    const b = document.getElementById('removeSubmit');
+    b.disabled = false; b.textContent = '移除';
+    return;
+  }
+  const old = account(res.key_id);
+  if (old) {
+    for (const k of [`ETH:${old.eth_address}`, `TRON:${old.tron_address}`]) { delete S.overview[k]; delete S.txs[k]; }
+  }
+  S.wallet = res.wallet || null;
+  if (S.keyId === res.key_id) { toggleTransfer(false); S.keyId = firstKeyId(); store.set('keyId', S.keyId ?? ''); }
+  closeRemove();
+  renderAll(); refreshTxs();
+  showToast(`已移除 ID ${res.key_id} 的本地缓存，设备私钥未改动`, 3500);
+};
+const firstKeyId = () => S.wallet?.accounts?.[0]?.key_id ?? null;
+
+function renderContent() {
+  const el = document.getElementById('content'), acc = account(S.keyId);
+  if (!acc) {
+    const has = (S.wallet?.accounts || []).length > 0;
+    el.innerHTML = `<div class="card"><div class="empty">
+      <div class="big">🗝️</div>
+      <h3>${has ? '添加账户' : '暂无账户'}</h3>
+      <p>每个账户对应 Nitrokey 中的一把 secp256k1 密钥，由<b>密钥标签 (CKA_LABEL)</b> 和 <b>CKA_ID (0-${MAX_KEY_ID})</b> 共同确定。
+      导入时两者必须与设备中的密钥完全一致；创建时两者都不能被其他密钥占用。私钥永不离开设备。</p>
+      <div class="actions" style="justify-content:center">
+        <button class="btn primary" onclick="openAuth('import')">导入已有密钥</button>
+        <button class="btn" onclick="openAuth('create')">＋ 创建新密钥</button>
+      </div></div></div>`;
+    return;
+  }
+  const chain = S.chain, n = nativeOf(chain), addr = addrOf(acc, chain);
+  const tokenLabel = chain === 'ETH' ? 'ERC-20' : 'TRC-20';
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">${esc(acc.account_name)} <span class="tag" title="CKA_ID">ID ${fmtId(acc.key_id)}</span> <span class="tag">${chain === 'ETH' ? 'Ethereum 主网' : 'TRON 主网'}</span></div>
+        <div class="seg" role="tablist" aria-label="切换链">
+          <button role="tab" class="${chain === 'ETH' ? 'on' : ''}" onclick="switchChain('ETH')">ETH</button>
+          <button role="tab" class="${chain === 'TRON' ? 'on' : ''}" onclick="switchChain('TRON')">TRON</button>
+        </div>
+      </div>
+      <div class="addr-row">
+        <span class="mono" title="${esc(addr)}">${esc(addr)}</span>
+        <button class="btn sm" data-copy="${esc(addr)}">复制</button>
+      </div>
+      <div id="overviewArea"></div>
+      <div class="actions">
+        <button class="btn primary" onclick="toggleTransfer()" id="transferToggle">↗ 转账</button>
+        <button class="btn" onclick="refreshCurrentOverview()">↻ 刷新余额</button>
+        <button class="btn" style="margin-left:auto" onclick="openRemove(${S.keyId})" title="只删除本地缓存，不影响设备私钥">移除账户</button>
+      </div>
+      ${renderTransferForm(chain, n, tokenLabel)}
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">最近交易 <span class="tag">${n} / USDT</span></div>
+        <button class="btn sm" onclick="refreshTxs(true)" id="txRefreshBtn">↻ 刷新</button>
+      </div>
+      <div class="tx-list" id="txArea"></div>
+    </div>`;
+}
+function renderTransferForm(chain, n, tokenLabel) {
+  return `
+    <div class="transfer" id="transferPanel">
+      <div class="field">
+        <label>资产</label>
+        <div class="seg" role="radiogroup" aria-label="选择资产">
+          <button role="radio" data-asset="${n}" onclick="pickAsset('${n}')">${n}</button>
+          <button role="radio" data-asset="USDT" onclick="pickAsset('USDT')">USDT (${tokenLabel})</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="txTo">收款地址</label>
+        <input id="txTo" class="mono" placeholder="${chain === 'ETH' ? '0x…' : 'T…'}" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="field">
+        <label for="txAmount">金额</label>
+        <div class="amount-wrap">
+          <input id="txAmount" inputmode="decimal" placeholder="0.00" autocomplete="off" />
+          <button class="btn sm" id="maxBtn" onclick="fillMax()">全部</button>
+        </div>
+        <div class="hint" id="availHint"></div>
+      </div>
+      <div class="notice err" id="transferError"></div>
+      <div class="actions" style="margin-top:0">
+        <button class="btn primary" id="prepareBtn" onclick="prepareTransfer()">预估手续费并签名</button>
+        <button class="btn" onclick="toggleTransfer(false)">取消</button>
+      </div>
+    </div>`;
+}
+
+function renderOverview() {
+  const el = document.getElementById('overviewArea'), acc = account(S.keyId);
+  if (!el || !acc) return;
+  const chain = S.chain, n = nativeOf(chain), ov = S.overview[`${chain}:${addrOf(acc, chain)}`], d = ov?.data;
+  const sk = '<span class="skeleton"></span>';
+  const status = ov?.status === 'err'
+    ? `<div class="notice err" style="margin-top:12px">余额获取失败：${esc(ov.error)} <button class="btn sm" onclick="refreshCurrentOverview()">重试</button></div>`
+    : '';
+  let html = `<div class="balance-main"><span class="num">${d ? formatUnits(d.native, nativeDecimals(chain), 6) : sk}</span><span class="unit">${n}</span>
+    ${ov?.status === 'loading' && d ? '<span class="muted spin">↻</span>' : ''}</div>`;
+  html += '<div class="assets">';
+  html += `<div class="asset"><div class="asset-label"><span>USDT · ${chain === 'ETH' ? 'ERC-20' : 'TRC-20'}</span></div>
+    <div class="asset-value">${d ? formatUnits(d.usdt, 6, 6) : sk}</div></div>`;
+  if (chain === 'TRON') {
+    const meter = (label, avail, limit, color) => {
+      const pct = limit > 0 ? Math.min(100, avail / limit * 100) : 0;
+      return `<div class="asset"><div class="asset-label"><span>${label}</span><span>${d ? `${avail.toLocaleString()} / ${limit.toLocaleString()}` : ''}</span></div>
+        <div class="asset-value">${d ? avail.toLocaleString() : sk}</div>
+        <div class="meter"><i style="width:${pct}%;background:${color}"></i></div></div>`;
+    };
+    html += meter('⚡ 能量 Energy', d?.energyAvail || 0, d?.energyLimit || 0, 'var(--energy-color)');
+    html += meter('📶 带宽 Bandwidth', d?.netAvail || 0, d?.netLimit || 0, 'var(--bandwidth-color)');
+  }
+  html += '</div>';
+  if (chain === 'TRON' && d && !d.activated) {
+    html += '<div class="notice" style="margin-top:12px">该地址尚未在 TRON 链上激活。需要先从其他地址转入少量 TRX 才能发起转账。</div>';
+  }
+  el.innerHTML = html + status;
+  updateAvailHint();
+}
+
+function renderTxs() {
+  const el = document.getElementById('txArea'), acc = account(S.keyId);
+  if (!el || !acc) return;
+  const t = S.txs[`${S.chain}:${addrOf(acc, S.chain)}`];
+  const btn = document.getElementById('txRefreshBtn');
+  if (btn) { btn.disabled = t?.status === 'loading'; btn.innerHTML = t?.status === 'loading' ? '<span class="spin">↻</span> 加载中' : '↻ 刷新'; }
+  if (!t || (t.status === 'loading' && !t.data)) {
+    el.innerHTML = `<div class="placeholder"><span class="skeleton" style="width:60%"></span></div>`.repeat(3);
+    return;
+  }
+  if (t.status === 'err' && !t.data) {
+    el.innerHTML = `<div class="placeholder">交易记录获取失败：${esc(t.error)}</div>`;
+    return;
+  }
+  const list = t.data || [];
+  if (!list.length) { el.innerHTML = `<div class="placeholder">${list.partial ? '部分记录获取失败，请稍后刷新' : '暂无交易记录'}</div>`; return; }
+  el.innerHTML = list.map(txRow).join('') +
+    (t.status === 'err' ? `<div class="placeholder">刷新失败：${esc(t.error)}（显示的是上次结果）</div>`
+      : (list.partial ? '<div class="placeholder">部分记录获取失败，列表可能不完整，可稍后刷新</div>' : ''));
+}
+
+function txRow(tx) {
+  const icon = { in: '↙', out: '↗', self: '⇄' }[tx.dir];
+  const title = { in: '收到', out: '发送', self: '自转' }[tx.dir];
+  const peer = tx.dir === 'in' ? tx.from : tx.to;
+  const sign = tx.dir === 'in' ? '+' : (tx.dir === 'out' ? '−' : '');
+  return `<div class="tx" role="button" tabindex="0" data-copy="${esc(tx.hash)}" title="点击复制交易哈希">
+    <div class="tx-icon ${tx.dir === 'in' ? 'in' : ''}">${icon}</div>
+    <div class="tx-main">
+      <div class="tx-title">${title} ${esc(tx.asset)} ${tx.failed ? '<span class="badge-fail">失败</span>' : ''}</div>
+      <div class="tx-sub mono">${tx.dir === 'in' ? '来自' : '至'} ${esc(shortAddr(peer))} · ${fmtTime(tx.ts)}</div>
+    </div>
+    <div class="tx-amt ${tx.dir === 'in' ? 'in' : ''}">${sign}${formatUnits(tx.amount, tx.decimals, 6)} ${esc(tx.asset)}</div>
+  </div>`;
+}
+
+/** 结构变化（切换账户 / 链 / 钱包更新）时整体重建；数据到达时只局部刷新 */
+function renderAll() { renderHeader(); renderSlots(); renderContent(); renderOverview(); renderTxs(); syncAssetButtons(); }
+function renderData() { renderSlots(); renderOverview(); renderTxs(); }
+// =====================================================================
+// 交互
+// =====================================================================
+function currentOverview() {
+  const acc = account(S.keyId);
+  return acc ? S.overview[`${S.chain}:${addrOf(acc, S.chain)}`]?.data : null;
+}
+function refreshCurrentOverview() {
+  const acc = account(S.keyId);
+  if (acc) refreshOverview(S.chain, addrOf(acc, S.chain), true);
+}
+function selectAccount(id) {
+  if (S.keyId === id) return;
+  S.keyId = id; store.set('keyId', id === null ? '' : String(id));
+  renderAll(); refreshTxs();
+}
+function switchChain(c) {
+  if (S.chain === c) return;
+  S.chain = c; S.asset = nativeOf(c); store.set('chain', c);
+  renderAll(); refreshAll();
+}
+function toggleTransfer(force) {
+  const p = document.getElementById('transferPanel');
+  if (!p) return;
+  const open = force === undefined ? !p.classList.contains('open') : force;
+  p.classList.toggle('open', open);
+  if (open) { syncAssetButtons(); document.getElementById('txTo').focus(); }
+  else setTransferError('');
+}
+function pickAsset(a) { S.asset = a; syncAssetButtons(); setTransferError(''); }
+function syncAssetButtons() {
+  document.querySelectorAll('[data-asset]').forEach(b => {
+    const on = b.dataset.asset === S.asset;
+    b.classList.toggle('on', on); b.setAttribute('aria-checked', on);
+  });
+  const max = document.getElementById('maxBtn');
+  if (max) { max.disabled = S.asset !== 'USDT'; max.title = S.asset === 'USDT' ? '' : '原生币需预留手续费，请手动输入'; }
+  updateAvailHint();
+}
+function updateAvailHint() {
+  const el = document.getElementById('availHint'), d = currentOverview();
+  if (!el) return;
+  if (!d) { el.textContent = ''; return; }
+  el.textContent = S.asset === 'USDT'
+    ? `可用 ${formatUnits(d.usdt, 6, 6)} USDT`
+    : `可用 ${formatUnits(d.native, nativeDecimals(S.chain), 6)} ${S.asset}（需预留手续费）`;
+}
+function fillMax() {
+  const d = currentOverview();
+  if (d && S.asset === 'USDT') document.getElementById('txAmount').value = formatUnits(d.usdt, 6, 6).replace(/,/g, '');
+}
+function setTransferError(msg) {
+  const el = document.getElementById('transferError');
+  if (el) el.textContent = msg;
+}
+
+function showToast(msg, ms = 2600) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => t.classList.remove('show'), ms);
+}
+async function copyText(text, label = '已复制') {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch {}
+    ta.remove();
+  }
+  showToast(label);
+}
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-copy]');
+  if (el) copyText(el.dataset.copy, el.classList.contains('tx') ? '交易哈希已复制' : '地址已复制');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('.tx[data-copy]')) e.target.click();
+  if (e.key === 'Escape') { if (!S.busy) closeAuth(); closeRemove(); }
+  if (e.key === 'Enter' && document.getElementById('authModal').classList.contains('open') && e.target.tagName === 'INPUT') submitAuth();
+});
+// =====================================================================
+// 转账：预估手续费
+// =====================================================================
+async function prepareEth(acc, to, amountStr) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(to)) throw new Error('ETH 地址格式无效（0x + 40 位十六进制）');
+  const from = acc.eth_address;
+  if (to.toLowerCase() === from.toLowerCase()) throw new Error('收款地址不能是自己');
+  const isUsdt = S.asset === 'USDT';
+  const amount = parseUnits(amountStr, isUsdt ? 6 : 18);
+
+  const [nonce, gp, ov] = await Promise.all([
+    ethRpc('eth_getTransactionCount', [from, 'pending']),
+    ethRpc('eth_gasPrice', []),
+    loadEthOverview(from),
+  ]);
+  const gasPrice = BigInt(gp) * 12n / 10n;   // 上浮 20%，防止 base fee 上涨导致卡单
+  if (gasPrice > ETH_MAX_GAS_PRICE) throw new Error('当前 Gas 价格异常偏高 (>500 Gwei)，请稍后再试');
+
+  if (isUsdt && amount > ov.usdt) throw new Error(`USDT 余额不足（可用 ${formatUnits(ov.usdt, 6)}）`);
+  if (!isUsdt && amount >= ov.native) throw new Error(`ETH 余额不足（可用 ${formatUnits(ov.native, 18)}）`);
+
+  const call = isUsdt
+    ? { from, to: ETH_USDT, data: erc20TransferData(to, amount) }
+    : { from, to, value: '0x' + amount.toString(16) };
+  let gasLimit;
+  try {
+    const est = BigInt(await ethRpc('eth_estimateGas', [call]));
+    gasLimit = isUsdt ? est * 13n / 10n : (est <= 21000n ? 21000n : est * 13n / 10n);
+  } catch (e) {
+    throw new Error('交易模拟失败：' + e.message);
+  }
+  const fee = gasPrice * gasLimit;
+  if (isUsdt ? fee > ov.native : amount + fee > ov.native) {
+    throw new Error(`ETH 不足以支付手续费（预计 ${formatUnits(fee, 18, 6)} ETH）`);
+  }
+  return {
+    nonce, gas_price: '0x' + gasPrice.toString(16), gas_limit: '0x' + gasLimit.toString(16),
+    feeText: `≈ ${formatUnits(fee, 18, 6)} ETH（Gas ${gasLimit} × ${formatUnits(gasPrice, 9, 2)} Gwei，上限）`,
+    warning: '',
+  };
+}
+
+async function prepareTron(acc, to, amountStr) {
+  if (!isTronAddr(to)) throw new Error('TRON 地址无效（请检查是否输错）');
+  const from = acc.tron_address;
+  if (to === from) throw new Error('收款地址不能是自己');
+  const isUsdt = S.asset === 'USDT';
+  const amount = parseUnits(amountStr, 6);
+
+  const [ov, params, toAcc] = await Promise.all([
+    loadTronOverview(from),
+    tronPost('/wallet/getchainparameters', {}),
+    tronPost('/wallet/getaccount', { address: to, visible: true }),
+  ]);
+  if (!ov.activated) throw new Error('当前地址尚未激活，请先转入少量 TRX');
+  const param = k => BigInt((params.chainParameter || []).find(p => p.key === k)?.value || 0);
+  const energyFee = param('getEnergyFee') || 100n;
+  const netFee = param('getTransactionFee') || 1000n;
+  const toActivated = !!toAcc && Object.keys(toAcc).length > 0;
+
+  let warning = '', burn = 0n;
+  if (isUsdt) {
+    if (amount > ov.usdt) throw new Error(`USDT 余额不足（可用 ${formatUnits(ov.usdt, 6)}）`);
+    const sim = await tronPost('/wallet/triggerconstantcontract', {
+      owner_address: from, contract_address: TRON_USDT, visible: true,
+      function_selector: 'transfer(address,uint256)',
+      parameter: pad32(tronToHex(to).slice(2)) + amount.toString(16).padStart(64, '0'),
+    });
+    // result.result 只表示调用被节点接受；transaction.ret 为 FAILED 才说明合约执行会回滚
+    if (!sim.result?.result || sim.transaction?.ret?.[0]?.ret === 'FAILED') {
+      throw new Error('合约模拟执行失败（转账会被回滚并扣费）：' + decodeHexMsg(sim.result?.message || '') );
+    }
+    const energy = BigInt(sim.energy_used || 65000);
+    const energyBurn = (energy > BigInt(ov.energyAvail) ? energy - BigInt(ov.energyAvail) : 0n) * energyFee;
+    const netBurn = ov.netAvail >= 350 ? 0n : 350n * netFee;
+    burn = energyBurn + netBurn;
+    if (energyBurn > TRON_FEE_LIMIT_SUN * 9n / 10n) throw new Error(`预计燃烧 ${formatUnits(energyBurn, 6, 2)} TRX，超过 50 TRX 费用上限，请先质押或租赁能量`);
+    if (burn > ov.native) throw new Error(`TRX 不足以支付手续费（预计燃烧 ${formatUnits(burn, 6, 2)} TRX，可用 ${formatUnits(ov.native, 6, 2)}）。强行发送会失败并扣费`);
+    warning = `预计消耗能量 ${energy.toLocaleString()}（可用 ${ov.energyAvail.toLocaleString()}）`;
+    if (!toActivated) warning += '；收款方未激活或从未持有 USDT，能量消耗约翻倍';
+  } else {
+    const netBurn = ov.netAvail >= 280 ? 0n : 280n * netFee;
+    const createFee = toActivated ? 0n : 1000000n;
+    burn = netBurn + createFee;
+    if (amount + burn > ov.native) throw new Error(`TRX 余额不足（需要 ${formatUnits(amount + burn, 6)}，可用 ${formatUnits(ov.native, 6)}）`);
+    if (!toActivated) warning = '收款地址尚未激活，本次转账会激活该地址，额外燃烧约 1 TRX';
+  }
+  return {
+    feeText: burn === 0n ? '0 TRX（使用账户带宽 / 能量）' : `≈ ${formatUnits(burn, 6, 2)} TRX（燃烧）`,
+    warning,
+  };
+}
+
+async function prepareTransfer() {
+  const acc = account(S.keyId);
+  if (!acc || S.busy) return;
+  const to = document.getElementById('txTo').value.trim();
+  const amount = document.getElementById('txAmount').value.trim();
+  const btn = document.getElementById('prepareBtn');
+  setTransferError('');
+  if (!to) return setTransferError('请输入收款地址');
+  if (!amount) return setTransferError('请输入金额');
+  btn.disabled = true; btn.innerHTML = '<span class="spin">↻</span> 正在估算…';
+  try {
+    const extra = S.chain === 'ETH' ? await prepareEth(acc, to, amount) : await prepareTron(acc, to, amount);
+    S.pending = { key_id: acc.key_id, chain: S.chain, asset: S.asset, to, amount, from: addrOf(acc, S.chain), name: acc.account_name, ...extra };
+    openAuth('sign');
+  } catch (e) {
+    setTransferError(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '预估手续费并签名';
+  }
+}
+// =====================================================================
+// 认证弹窗（PIN / Label 只在提交瞬间读取，随即清空输入框）
+// =====================================================================
+const AUTH_TEXT = {
+  import: ['导入已有密钥', '请插入 Nitrokey HSM 2，输入密钥标签、CKA_ID 和 PIN。只有标签与 CKA_ID 同时和设备中的密钥一致才会导入。读取公钥后会话立即关闭，可以拔出设备。', '校验并导入'],
+  create: ['创建新密钥', '请先连接 Nitrokey HSM 2 并输入 PIN。将在设备内用指定的标签和 CKA_ID 生成新私钥：该 ID 已被占用、或该标签已用于其他 ID 时创建失败。标签请自行记住（不会被保存或显示）。', '生成密钥'],
+  sign: ['确认并签名', '请连接 Nitrokey HSM 2 并核对以下信息。设备会校验标签与该账户的 CKA_ID 一致后才签名，签名后不会自动广播。', '硬件签名'],
+};
+/** 与后端 parse_key_id 一致：十进制或 0x 十六进制，0-254 */
+function parseKeyIdInput(str) {
+  const t = str.trim();
+  let n = NaN;
+  if (/^0x[0-9a-f]+$/i.test(t)) n = parseInt(t.slice(2), 16);
+  else if (/^\d+$/.test(t)) n = parseInt(t, 10);
+  else throw new Error(`CKA_ID 格式无效，请输入 0-${MAX_KEY_ID} 的整数`);
+  if (!(n >= 0 && n <= MAX_KEY_ID)) throw new Error(`CKA_ID 超出范围 (0-${MAX_KEY_ID})`);
+  return n;
+}
+function updateKeyIdHint() {
+  const v = document.getElementById('authKeyId').value, hint = document.getElementById('authKeyIdHint');
+  if (!v.trim()) { hint.textContent = '十进制，或 0x 开头的十六进制（pkcs11-tool --id 使用十六进制）'; return; }
+  try { hint.textContent = `= ${fmtId(parseKeyIdInput(v))}`; } catch (e) { hint.textContent = e.message; }
+}
+document.getElementById('authKeyId').addEventListener('input', updateKeyIdHint);
+function openAuth(mode) {
+  if (S.busy || !window.ipc) { if (!window.ipc) showToast('预览模式下无法连接设备'); return; }
+  S.authMode = mode;
+  const [title, notice, btn] = AUTH_TEXT[mode];
+  const cur = account(S.keyId);
+  // 「刷新设备钱包」= 按当前账户的 CKA_ID 重新导入
+  const refreshing = mode === 'import' && cur;
+  document.getElementById('authTitle').textContent = refreshing ? `刷新账户 · ID ${fmtId(cur.key_id)}` : title;
+  document.getElementById('authNotice').textContent = notice;
+  document.getElementById('authSubmit').textContent = btn;
+  document.getElementById('authError').textContent = '';
+  const sum = document.getElementById('authSummary');
+  if (mode === 'sign' && S.pending) {
+    const p = S.pending;
+    sum.innerHTML = `
+      <dt>账户</dt><dd>${esc(p.name)} · <span class="mono">${esc(shortAddr(p.from))}</span></dd>
+      <dt>CKA_ID</dt><dd class="mono">${fmtId(p.key_id)}</dd>
+      <dt>网络</dt><dd>${p.chain === 'ETH' ? 'Ethereum 主网' : 'TRON 主网'}</dd>
+      <dt>资产</dt><dd>${esc(p.asset)}</dd>
+      <dt>金额</dt><dd><b>${esc(p.amount)} ${esc(p.asset)}</b></dd>
+      <dt>收款地址</dt><dd class="mono selectable">${esc(p.to)}</dd>
+      <dt>手续费</dt><dd>${esc(p.feeText)}</dd>
+      ${p.warning ? `<dt>提示</dt><dd style="color:var(--warn-text)">${esc(p.warning)}</dd>` : ''}`;
+    sum.style.display = '';
+  } else {
+    sum.innerHTML = ''; sum.style.display = 'none';
+  }
+  clearAuthInputs();
+  document.getElementById('authKeyIdField').style.display = mode === 'sign' ? 'none' : '';
+  document.getElementById('authKeyId').value = refreshing ? String(cur.key_id) : '';
+  updateKeyIdHint();
+  document.getElementById('authModal').classList.add('open');
+  document.getElementById('authLabel').focus();
+}
+function clearAuthInputs() { document.getElementById('authLabel').value = ''; document.getElementById('authPin').value = ''; }
+function closeAuth() {
+  if (S.busy) return;
+  clearAuthInputs();
+  document.getElementById('authKeyId').value = '';
+  document.getElementById('authModal').classList.remove('open');
+  if (S.authMode === 'sign') S.pending = null;
+  S.authMode = null;
+}
+function setAuthBusy(busy) {
+  S.busy = busy;
+  const btn = document.getElementById('authSubmit');
+  btn.disabled = busy; document.getElementById('authCancel').disabled = busy;
+  for (const id of ['authLabel', 'authPin', 'authKeyId']) document.getElementById(id).disabled = busy;
+  btn.innerHTML = busy ? '<span class="spin">↻</span> 等待设备…' : AUTH_TEXT[S.authMode]?.[2] || '确认';
+}
+
+async function submitAuth() {
+  if (S.busy || !S.authMode) return;
+  const labelEl = document.getElementById('authLabel'), pinEl = document.getElementById('authPin');
+  const errEl = document.getElementById('authError');
+  if (!labelEl.value.trim()) { errEl.textContent = '请输入密钥标签'; return; }
+  let keyId = null;
+  if (S.authMode !== 'sign') {
+    try { keyId = parseKeyIdInput(document.getElementById('authKeyId').value); }
+    catch (e) { errEl.textContent = e.message; return; }
+  }
+  if (!pinEl.value) { errEl.textContent = '请输入 PIN'; return; }
+  errEl.textContent = '';
+
+  let msg = { key_id: keyId, key_label: labelEl.value, pin: pinEl.value };
+  clearAuthInputs();
+  setAuthBusy(true);
+  try {
+    if (S.authMode === 'import') msg.action = 'import_account';
+    else if (S.authMode === 'create') msg.action = 'create_account';
+    else {
+      const p = S.pending;
+      Object.assign(msg, { action: 'sign_tx', key_id: p.key_id, chain: p.chain, asset: p.asset, to: p.to, amount: p.amount });
+      if (p.chain === 'ETH') Object.assign(msg, { nonce: p.nonce, gas_price: p.gas_price, gas_limit: p.gas_limit });
+      else {
+        // 参考区块在签名前一刻获取，保证在后端时效校验范围内
+        const blk = await tronPost('/wallet/getnowblock', {});
+        const h = blk.block_header?.raw_data;
+        if (!blk.blockID || !h) throw new Error('获取 TRON 最新区块失败');
+        Object.assign(msg, { block_number: String(h.number), block_id: blk.blockID, block_timestamp: String(h.timestamp) });
+      }
+    }
+  } catch (e) {
+    msg = null;
+    setAuthBusy(false);
+    errEl.textContent = e.message;
+    return;
+  }
+  // 让“等待设备”状态先渲染出来，再进入同步的硬件调用
+  setTimeout(() => { window.ipc.postMessage(JSON.stringify(msg)); msg = null; }, 50);
+}
+
+window.onAuthCompleted = function ({ mode, result }) {
+  setAuthBusy(false);
+  if (!result.ok) {
+    document.getElementById('authError').textContent = result.error || '操作失败';
+    return;
+  }
+  document.getElementById('authModal').classList.remove('open');
+  S.authMode = null;
+  if (mode === 'import' || mode === 'create') {
+    S.wallet = result.wallet;
+    S.keyId = result.key_id; store.set('keyId', String(result.key_id));
+    document.getElementById('authKeyId').value = '';
+    renderAll(); refreshAll(true);
+    showToast(`${mode === 'create' ? '密钥已创建' : '标签与 CKA_ID 校验通过，已导入'}（ID ${fmtId(result.key_id)}）。可以拔出设备了`, 4000);
+  } else if (mode === 'sign') {
+    S.signed = { ...result.signed, chain: S.pending.chain, asset: S.pending.asset, amount: S.pending.amount, to: S.pending.to };
+    S.pending = null;
+    openResult();
+  }
+};
+// =====================================================================
+// 签名结果与广播
+// =====================================================================
+function openResult() {
+  const s = S.signed;
+  document.getElementById('resultTitle').textContent = '交易已签名';
+  document.getElementById('resultError').textContent = '';
+  document.getElementById('resultSummary').innerHTML = `
+    <dt>网络</dt><dd>${s.chain === 'ETH' ? 'Ethereum 主网' : 'TRON 主网'}</dd>
+    <dt>金额</dt><dd><b>${esc(s.amount)} ${esc(s.asset)}</b></dd>
+    <dt>收款地址</dt><dd class="mono selectable">${esc(s.to)}</dd>
+    <dt>发送方</dt><dd class="mono selectable">${esc(s.from)}</dd>
+    <dt>交易哈希</dt><dd class="mono selectable">${esc(s.tx_id)}</dd>
+    ${s.chain === 'TRON' ? '<dt>有效期</dt><dd>约 10 分钟内需广播，超时请重新签名</dd>' : ''}`;
+  const b = document.getElementById('broadcastBtn');
+  b.disabled = false; b.textContent = '广播交易';
+  document.getElementById('resultModal').classList.add('open');
+}
+function closeResult() {
+  document.getElementById('resultModal').classList.remove('open');
+  S.signed = null;
+}
+function copyRawTx() { if (S.signed) copyText(S.signed.raw_tx_hex, '原始交易已复制'); }
+
+function decodeHexMsg(h) {
+  // TronGrid 的错误信息有时是 hex 编码，有时是明文
+  if (!/^(0x)?([0-9a-f]{2})+$/i.test(h)) return h;
+  try { return new TextDecoder().decode(hexToBytes(h)); } catch { return h; }
+}
+async function broadcast() {
+  const s = S.signed, b = document.getElementById('broadcastBtn'), errEl = document.getElementById('resultError');
+  if (!s) return;
+  b.disabled = true; b.innerHTML = '<span class="spin">↻</span> 广播中…'; errEl.textContent = '';
+  try {
+    if (s.chain === 'ETH') {
+      const hash = await ethRpc('eth_sendRawTransaction', [s.raw_tx_hex]);
+      if (hash && hash.toLowerCase() !== s.tx_id.toLowerCase()) throw new Error('节点返回的交易哈希与本地不一致：' + hash);
+    } else {
+      const r = await tronPost('/wallet/broadcasthex', { transaction: s.raw_tx_hex });
+      if (!r.result) throw new Error(`${r.code || '广播失败'}${r.message ? '：' + decodeHexMsg(r.message) : ''}`);
+    }
+    b.textContent = '已广播';
+    document.getElementById('resultTitle').textContent = '交易已广播 ✓';
+    showToast('交易已广播，等待链上确认', 4000);
+    toggleTransfer(false);
+    const to = document.getElementById('txTo'), amt = document.getElementById('txAmount');
+    if (to) to.value = ''; if (amt) amt.value = '';
+    // 等出块后刷新余额与交易
+    setTimeout(() => refreshAll(true), s.chain === 'ETH' ? 15000 : 5000);
+  } catch (e) {
+    errEl.textContent = '广播失败：' + e.message;
+    b.disabled = false; b.textContent = '重试广播';
+  }
+}
+
+// =====================================================================
+// 主题
+// =====================================================================
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.getElementById('themeIcon').textContent = theme === 'dark' ? '☀️' : '🌙';
+}
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  store.set('theme', next); applyTheme(next);
+}
+systemDark.addEventListener?.('change', e => { if (!store.get('theme')) applyTheme(e.matches ? 'dark' : 'light'); });
+
+// =====================================================================
+// 启动
+// =====================================================================
+window.onWalletLoaded = function (wallet) {
+  S.wallet = wallet || null;
+  const accs = S.wallet?.accounts || [];
+  if (!account(S.keyId) && accs.length) S.keyId = accs[0].key_id;
+  renderAll(); refreshAll();
+};
+
+(function init() {
+  applyTheme(store.get('theme') || (systemDark.matches ? 'dark' : 'light'));
+  const savedKey = store.get('keyId');
+  if (savedKey && /^\d+$/.test(savedKey) && Number(savedKey) <= MAX_KEY_ID) S.keyId = Number(savedKey);
+  if (store.get('chain') === 'TRON') S.chain = 'TRON';
+  S.asset = nativeOf(S.chain);
+  renderAll();
+  if (window.ipc) window.ipc.postMessage(JSON.stringify({ action: 'load_cache' }));
+  // 每 2 分钟自动刷新一次余额（仅读取链上公开数据）
+  setInterval(() => { if (!document.hidden && S.wallet) refreshAll(); }, 120000);
+})();
+</script>
+</body>
+</html>

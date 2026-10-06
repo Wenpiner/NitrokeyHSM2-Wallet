@@ -1,0 +1,47 @@
+[package]
+name = "nitrokey-wallet-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Nitrokey Wallet Team"]
+description = "High-security multi-chain (ETH/TRON) wallet core powered by Nitrokey HSM 2"
+license = "Unlicense"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+# 密码学核心库
+k256 = { version = "0.13", features = ["ecdsa", "sha256", "arithmetic"] }
+sha2 = "0.10"
+sha3 = { version = "0.10", features = ["std"] }
+bs58 = { version = "0.5", features = ["check"] }
+
+# 内存安全覆写
+zeroize = { version = "1.8", features = ["derive"] }
+
+# 序列化与错误处理
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+hex = "0.4"
+wry = "0.57.0"
+tao = "0.37.1"
+cryptoki = "0.12.1"
+secrecy = "0.10.3"
+
+[[bin]]
+name = "nitrokey-wallet"
+path = "src/main.rs"
+
+# macOS 平台支持系统原生 PC/SC 库
+[target.'cfg(target_os = "macos")'.dependencies]
+pcsc = { version = "2.8", optional = true }
+# 原生菜单栏（Cmd+Q 退出、Cmd+C/V 复制粘贴）
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", features = ["NSString"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
+
+[features]
+default = ["macos-pcsc"]
+macos-pcsc = ["pcsc"]
