@@ -316,9 +316,12 @@
 // 常量
 // =====================================================================
 const ETH_RPC = 'https://ethereum-rpc.publicnode.com';
+const BSC_RPC = 'https://bsc-rpc.publicnode.com';
 const BLOCKSCOUT = 'https://eth.blockscout.com/api/v2';
+const BSC_EXPLORER_API = 'https://api.routescan.io/v2/network/mainnet/evm/56/etherscan/api';
 const TRONGRID = 'https://api.trongrid.io';
 const ETH_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
+const BSC_USDT = '0x55d398326f99059fF775485246999027B3197955';
 const TRON_USDT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 const MAX_KEY_ID = 254;               // CKA_ID 单字节，0-254
 const TRON_FEE_LIMIT_SUN = 50000000n;   // 与后端 fee_limit 一致
@@ -451,14 +454,16 @@ async function fetchJson(url, opts = {}, timeoutMs = 25000) {
   }
 }
 let rpcId = 1;
-async function ethRpc(method, params) {
-  const r = await fetchJson(ETH_RPC, {
+async function evmRpc(chain, method, params) {
+  const url = chain === 'BSC' ? BSC_RPC : ETH_RPC;
+  const r = await fetchJson(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
   }, 15000);
   if (r.error) throw new Error(r.error.message || 'RPC 错误');
   return r.result;
 }
+const ethRpc = (method, params) => evmRpc('ETH', method, params);
 // TronGrid 无 API Key 时对突发并发请求返回 429：所有 TRON 请求串行排队、间隔发出，429 时退避重试
 const TRON_GAP_MS = 250;
 let tronQueue = Promise.resolve();
@@ -493,13 +498,15 @@ const erc20BalanceData = addr => '0x70a08231' + pad32(addr);
 const erc20TransferData = (to, amt) => '0xa9059cbb' + pad32(to) + amt.toString(16).padStart(64, '0');
 
 // ---------------- 余额 / 资源 ----------------
-async function loadEthOverview(addr) {
-  const [eth, usdt] = await Promise.all([
-    ethRpc('eth_getBalance', [addr, 'latest']),
-    ethRpc('eth_call', [{ to: ETH_USDT, data: erc20BalanceData(addr) }, 'latest']),
+async function loadEvmOverview(chain, addr) {
+  const usdtContract = chain === 'BSC' ? BSC_USDT : ETH_USDT;
+  const [native, usdt] = await Promise.all([
+    evmRpc(chain, 'eth_getBalance', [addr, 'latest']),
+    evmRpc(chain, 'eth_call', [{ to: usdtContract, data: erc20BalanceData(addr) }, 'latest']),
   ]);
-  return { native: BigInt(eth), usdt: BigInt(usdt === '0x' ? 0 : usdt) };
+  return { native: BigInt(native), usdt: BigInt(usdt === '0x' ? 0 : usdt) };
 }
+const loadEthOverview = addr => loadEvmOverview('ETH', addr);
 
 async function loadTronOverview(addr) {
   const [acc, res] = await Promise.all([
@@ -547,6 +554,69 @@ async function loadEthTxs(addr) {
       amount: BigInt(t.total?.value || 0), decimals: Number(t.total?.decimals || 6), failed: false,
     });
   }
+  const out = list.map(x => ({ ...x, dir: dirOf(x.from.toLowerCase(), x.to.toLowerCase(), me) }))
+    .sort((a, b) => b.ts - a.ts).slice(0, 5);
+  out.partial = partial;
+  return out;
+}
+
+async function fetchEtherscanList(url) {
+  const r = await fetchJson(url, {}, 30000);
+  if (Array.isArray(r?.result)) return r.result;
+  if (r?.status === '0' && /no transactions/i.test(String(r?.message || ''))) return [];
+  throw new Error(typeof r?.result === 'string' && r.result ? r.result : (r?.message || '查询失败'));
+}
+
+async function loadBscUsdtLogsFallback(addr) {
+  const latestHex = await evmRpc('BSC', 'eth_blockNumber', []);
+  const latest = parseInt(latestHex, 16);
+  const fromBlock = '0x' + Math.max(0, latest - 45000).toString(16);
+  const topicAddr = '0x' + pad32(addr);
+  const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const [outLogs, inLogs] = await Promise.all([
+    evmRpc('BSC', 'eth_getLogs', [{ fromBlock, toBlock: 'latest', address: BSC_USDT, topics: [TRANSFER_TOPIC, topicAddr] }]),
+    evmRpc('BSC', 'eth_getLogs', [{ fromBlock, toBlock: 'latest', address: BSC_USDT, topics: [TRANSFER_TOPIC, null, topicAddr] }]),
+  ]);
+  const seen = new Set(), items = [];
+  const now = Date.now();
+  for (const log of [...(outLogs || []), ...(inLogs || [])]) {
+    const key = `${log.transactionHash}:${log.logIndex}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const from = '0x' + (log.topics?.[1] || '').slice(-40);
+    const to = '0x' + (log.topics?.[2] || '').slice(-40);
+    const blk = parseInt(log.blockNumber || latestHex, 16);
+    const ts = log.blockTimestamp ? parseInt(log.blockTimestamp, 16) * 1000 : now - Math.max(0, latest - blk) * 750;
+    items.push({
+      hash: log.transactionHash, ts, asset: 'USDT',
+      from, to, amount: BigInt(log.data && log.data !== '0x' ? log.data : 0), decimals: 18, failed: false,
+    });
+  }
+  return items;
+}
+
+async function loadBscTxs(addr) {
+  const me = addr.toLowerCase();
+  const txTask = fetchEtherscanList(`${BSC_EXPLORER_API}?module=account&action=txlist&address=${addr}&page=1&offset=20&sort=desc`);
+  const tokenTask = fetchEtherscanList(`${BSC_EXPLORER_API}?module=account&action=tokentx&contractaddress=${BSC_USDT}&address=${addr}&page=1&offset=20&sort=desc`)
+    .then(rows => rows.map(t => ({
+      hash: t.hash, ts: Number(t.timeStamp || 0) * 1000, asset: 'USDT',
+      from: t.from || '', to: t.to || '',
+      amount: BigInt(t.value || 0), decimals: Number(t.tokenDecimal || 18), failed: false,
+    })))
+    .catch(() => loadBscUsdtLogsFallback(addr));
+
+  const { a: txs, b: tokens, partial } = await settleBoth(txTask, tokenTask);
+  const list = [];
+  for (const t of (txs || [])) {
+    if (!t.value || t.value === '0') continue;
+    list.push({
+      hash: t.hash, ts: Number(t.timeStamp || 0) * 1000, asset: 'BNB',
+      from: t.from || '', to: t.to || '', amount: BigInt(t.value), decimals: 18,
+      failed: t.isError === '1' || (t.txreceipt_status && t.txreceipt_status !== '1'),
+    });
+  }
+  for (const t of (tokens || [])) list.push(t);
   const out = list.map(x => ({ ...x, dir: dirOf(x.from.toLowerCase(), x.to.toLowerCase(), me) }))
     .sort((a, b) => b.ts - a.ts).slice(0, 5);
   out.partial = partial;
@@ -605,9 +675,13 @@ const store = {
 };
 const account = id => id === null ? undefined : (S.wallet?.accounts || []).find(a => a.key_id === id);
 const fmtId = id => `${id} (0x${id.toString(16).padStart(2, '0')})`;
-const addrOf = (acc, chain) => chain === 'ETH' ? acc.eth_address : acc.tron_address;
-const nativeOf = chain => chain === 'ETH' ? 'ETH' : 'TRX';
-const nativeDecimals = chain => chain === 'ETH' ? 18 : 6;
+const isEvmChain = chain => chain === 'ETH' || chain === 'BSC';
+const addrOf = (acc, chain) => isEvmChain(chain) ? acc.eth_address : acc.tron_address;
+const nativeOf = chain => chain === 'ETH' ? 'ETH' : (chain === 'BSC' ? 'BNB' : 'TRX');
+const nativeDecimals = chain => isEvmChain(chain) ? 18 : 6;
+const usdtDecimals = chain => chain === 'BSC' ? 18 : 6;
+const tokenStandardOf = chain => chain === 'ETH' ? 'ERC-20' : (chain === 'BSC' ? 'BEP-20' : 'TRC-20');
+const chainNameOf = chain => chain === 'ETH' ? 'Ethereum 主网' : (chain === 'BSC' ? 'BSC 主网' : 'TRON 主网');
 
 async function refreshEntry(map, key, loader, force, ttl) {
   const cur = map[key];
@@ -627,14 +701,14 @@ async function refreshEntry(map, key, loader, force, ttl) {
 }
 function refreshOverview(chain, addr, force = false) {
   return refreshEntry(S.overview, `${chain}:${addr}`,
-    () => chain === 'ETH' ? loadEthOverview(addr) : loadTronOverview(addr), force, 60000);
+    () => isEvmChain(chain) ? loadEvmOverview(chain, addr) : loadTronOverview(addr), force, 60000);
 }
 function refreshTxs(force = false) {
   const acc = account(S.keyId);
   if (!acc) return;
   const chain = S.chain, addr = addrOf(acc, chain);
   return refreshEntry(S.txs, `${chain}:${addr}`,
-    () => chain === 'ETH' ? loadEthTxs(addr) : loadTronTxs(addr), force, 60000);
+    () => chain === 'ETH' ? loadEthTxs(addr) : (chain === 'BSC' ? loadBscTxs(addr) : loadTronTxs(addr)), force, 60000);
 }
 function refreshAll(force = false) {
   for (const acc of (S.wallet?.accounts || [])) refreshOverview(S.chain, addrOf(acc, S.chain), force);
@@ -658,7 +732,7 @@ function renderSlots() {
     const addr = addrOf(acc, S.chain), ov = S.overview[`${S.chain}:${addr}`], n = nativeOf(S.chain);
     let bal;
     if (ov?.data) {
-      bal = `<b>${formatUnits(ov.data.native, nativeDecimals(S.chain), 4)}</b> ${n}<br><b>${formatUnits(ov.data.usdt, 6, 2)}</b> USDT`;
+      bal = `<b>${formatUnits(ov.data.native, nativeDecimals(S.chain), 4)}</b> ${n}<br><b>${formatUnits(ov.data.usdt, usdtDecimals(S.chain), 2)}</b> USDT`;
     } else if (ov?.status === 'err') {
       bal = `<span class="muted">余额获取失败</span>`;
     } else {
@@ -703,7 +777,7 @@ function openRemove(id) {
   document.getElementById('removeSummary').innerHTML =
     `<dt>账户</dt><dd>${esc(acc.account_name)}</dd>
      <dt>CKA_ID</dt><dd class="mono">${fmtId(id)}</dd>
-     <dt>ETH 地址</dt><dd class="mono">${esc(acc.eth_address)}</dd>
+     <dt>ETH / BSC 地址</dt><dd class="mono">${esc(acc.eth_address)}</dd>
      <dt>TRON 地址</dt><dd class="mono">${esc(acc.tron_address)}</dd>`;
   document.getElementById('removeError').textContent = '';
   const b = document.getElementById('removeSubmit');
@@ -730,7 +804,7 @@ window.onAccountRemoved = function (res) {
   }
   const old = account(res.key_id);
   if (old) {
-    for (const k of [`ETH:${old.eth_address}`, `TRON:${old.tron_address}`]) { delete S.overview[k]; delete S.txs[k]; }
+    for (const k of [`ETH:${old.eth_address}`, `BSC:${old.eth_address}`, `TRON:${old.tron_address}`]) { delete S.overview[k]; delete S.txs[k]; }
   }
   S.wallet = res.wallet || null;
   if (S.keyId === res.key_id) { toggleTransfer(false); S.keyId = firstKeyId(); store.set('keyId', S.keyId ?? ''); }
@@ -756,13 +830,14 @@ function renderContent() {
     return;
   }
   const chain = S.chain, n = nativeOf(chain), addr = addrOf(acc, chain);
-  const tokenLabel = chain === 'ETH' ? 'ERC-20' : 'TRC-20';
+  const tokenLabel = tokenStandardOf(chain);
   el.innerHTML = `
     <div class="card">
       <div class="card-head">
-        <div class="card-title">${esc(acc.account_name)} <span class="tag" title="CKA_ID">ID ${fmtId(acc.key_id)}</span> <span class="tag">${chain === 'ETH' ? 'Ethereum 主网' : 'TRON 主网'}</span></div>
+        <div class="card-title">${esc(acc.account_name)} <span class="tag" title="CKA_ID">ID ${fmtId(acc.key_id)}</span> <span class="tag">${chainNameOf(chain)}</span></div>
         <div class="seg" role="tablist" aria-label="切换链">
           <button role="tab" class="${chain === 'ETH' ? 'on' : ''}" onclick="switchChain('ETH')">ETH</button>
+          <button role="tab" class="${chain === 'BSC' ? 'on' : ''}" onclick="switchChain('BSC')">BSC</button>
           <button role="tab" class="${chain === 'TRON' ? 'on' : ''}" onclick="switchChain('TRON')">TRON</button>
         </div>
       </div>
@@ -798,7 +873,7 @@ function renderTransferForm(chain, n, tokenLabel) {
       </div>
       <div class="field">
         <label for="txTo">收款地址</label>
-        <input id="txTo" class="mono" placeholder="${chain === 'ETH' ? '0x…' : 'T…'}" autocomplete="off" spellcheck="false" />
+        <input id="txTo" class="mono" placeholder="${isEvmChain(chain) ? '0x…' : 'T…'}" autocomplete="off" spellcheck="false" />
       </div>
       <div class="field">
         <label for="txAmount">金额</label>
@@ -827,8 +902,8 @@ function renderOverview() {
   let html = `<div class="balance-main"><span class="num">${d ? formatUnits(d.native, nativeDecimals(chain), 6) : sk}</span><span class="unit">${n}</span>
     ${ov?.status === 'loading' && d ? '<span class="muted spin">↻</span>' : ''}</div>`;
   html += '<div class="assets">';
-  html += `<div class="asset"><div class="asset-label"><span>USDT · ${chain === 'ETH' ? 'ERC-20' : 'TRC-20'}</span></div>
-    <div class="asset-value">${d ? formatUnits(d.usdt, 6, 6) : sk}</div></div>`;
+  html += `<div class="asset"><div class="asset-label"><span>USDT · ${tokenStandardOf(chain)}</span></div>
+    <div class="asset-value">${d ? formatUnits(d.usdt, usdtDecimals(chain), 6) : sk}</div></div>`;
   if (chain === 'TRON') {
     const meter = (label, avail, limit, color) => {
       const pct = limit > 0 ? Math.min(100, avail / limit * 100) : 0;
@@ -930,12 +1005,12 @@ function updateAvailHint() {
   if (!el) return;
   if (!d) { el.textContent = ''; return; }
   el.textContent = S.asset === 'USDT'
-    ? `可用 ${formatUnits(d.usdt, 6, 6)} USDT`
+    ? `可用 ${formatUnits(d.usdt, usdtDecimals(S.chain), 6)} USDT`
     : `可用 ${formatUnits(d.native, nativeDecimals(S.chain), 6)} ${S.asset}（需预留手续费）`;
 }
 function fillMax() {
   const d = currentOverview();
-  if (d && S.asset === 'USDT') document.getElementById('txAmount').value = formatUnits(d.usdt, 6, 6).replace(/,/g, '');
+  if (d && S.asset === 'USDT') document.getElementById('txAmount').value = formatUnits(d.usdt, usdtDecimals(S.chain), 6).replace(/,/g, '');
 }
 function setTransferError(msg) {
   const el = document.getElementById('transferError');
@@ -971,41 +1046,43 @@ document.addEventListener('keydown', e => {
 // =====================================================================
 // 转账：预估手续费
 // =====================================================================
-async function prepareEth(acc, to, amountStr) {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(to)) throw new Error('ETH 地址格式无效（0x + 40 位十六进制）');
+async function prepareEvm(chain, acc, to, amountStr) {
+  const n = nativeOf(chain), usdtDec = usdtDecimals(chain);
+  const usdtContract = chain === 'BSC' ? BSC_USDT : ETH_USDT;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(to)) throw new Error(`${chain} 地址格式无效（0x + 40 位十六进制）`);
   const from = acc.eth_address;
   if (to.toLowerCase() === from.toLowerCase()) throw new Error('收款地址不能是自己');
   const isUsdt = S.asset === 'USDT';
-  const amount = parseUnits(amountStr, isUsdt ? 6 : 18);
+  const amount = parseUnits(amountStr, isUsdt ? usdtDec : 18);
 
   const [nonce, gp, ov] = await Promise.all([
-    ethRpc('eth_getTransactionCount', [from, 'pending']),
-    ethRpc('eth_gasPrice', []),
-    loadEthOverview(from),
+    evmRpc(chain, 'eth_getTransactionCount', [from, 'pending']),
+    evmRpc(chain, 'eth_gasPrice', []),
+    loadEvmOverview(chain, from),
   ]);
   const gasPrice = BigInt(gp) * 12n / 10n;   // 上浮 20%，防止 base fee 上涨导致卡单
   if (gasPrice > ETH_MAX_GAS_PRICE) throw new Error('当前 Gas 价格异常偏高 (>500 Gwei)，请稍后再试');
 
-  if (isUsdt && amount > ov.usdt) throw new Error(`USDT 余额不足（可用 ${formatUnits(ov.usdt, 6)}）`);
-  if (!isUsdt && amount >= ov.native) throw new Error(`ETH 余额不足（可用 ${formatUnits(ov.native, 18)}）`);
+  if (isUsdt && amount > ov.usdt) throw new Error(`USDT 余额不足（可用 ${formatUnits(ov.usdt, usdtDec)}）`);
+  if (!isUsdt && amount >= ov.native) throw new Error(`${n} 余额不足（可用 ${formatUnits(ov.native, 18)}）`);
 
   const call = isUsdt
-    ? { from, to: ETH_USDT, data: erc20TransferData(to, amount) }
+    ? { from, to: usdtContract, data: erc20TransferData(to, amount) }
     : { from, to, value: '0x' + amount.toString(16) };
   let gasLimit;
   try {
-    const est = BigInt(await ethRpc('eth_estimateGas', [call]));
+    const est = BigInt(await evmRpc(chain, 'eth_estimateGas', [call]));
     gasLimit = isUsdt ? est * 13n / 10n : (est <= 21000n ? 21000n : est * 13n / 10n);
   } catch (e) {
     throw new Error('交易模拟失败：' + e.message);
   }
   const fee = gasPrice * gasLimit;
   if (isUsdt ? fee > ov.native : amount + fee > ov.native) {
-    throw new Error(`ETH 不足以支付手续费（预计 ${formatUnits(fee, 18, 6)} ETH）`);
+    throw new Error(`${n} 不足以支付手续费（预计 ${formatUnits(fee, 18, 6)} ${n}）`);
   }
   return {
     nonce, gas_price: '0x' + gasPrice.toString(16), gas_limit: '0x' + gasLimit.toString(16),
-    feeText: `≈ ${formatUnits(fee, 18, 6)} ETH（Gas ${gasLimit} × ${formatUnits(gasPrice, 9, 2)} Gwei，上限）`,
+    feeText: `≈ ${formatUnits(fee, 18, 6)} ${n}（Gas ${gasLimit} × ${formatUnits(gasPrice, 9, 2)} Gwei，上限）`,
     warning: '',
   };
 }
@@ -1072,7 +1149,7 @@ async function prepareTransfer() {
   if (!amount) return setTransferError('请输入金额');
   btn.disabled = true; btn.innerHTML = '<span class="spin">↻</span> 正在估算…';
   try {
-    const extra = S.chain === 'ETH' ? await prepareEth(acc, to, amount) : await prepareTron(acc, to, amount);
+    const extra = isEvmChain(S.chain) ? await prepareEvm(S.chain, acc, to, amount) : await prepareTron(acc, to, amount);
     S.pending = { key_id: acc.key_id, chain: S.chain, asset: S.asset, to, amount, from: addrOf(acc, S.chain), name: acc.account_name, ...extra };
     openAuth('sign');
   } catch (e) {
@@ -1122,7 +1199,7 @@ function openAuth(mode) {
     sum.innerHTML = `
       <dt>账户</dt><dd>${esc(p.name)} · <span class="mono">${esc(shortAddr(p.from))}</span></dd>
       <dt>CKA_ID</dt><dd class="mono">${fmtId(p.key_id)}</dd>
-      <dt>网络</dt><dd>${p.chain === 'ETH' ? 'Ethereum 主网' : 'TRON 主网'}</dd>
+      <dt>网络</dt><dd>${chainNameOf(p.chain)}</dd>
       <dt>资产</dt><dd>${esc(p.asset)}</dd>
       <dt>金额</dt><dd><b>${esc(p.amount)} ${esc(p.asset)}</b></dd>
       <dt>收款地址</dt><dd class="mono selectable">${esc(p.to)}</dd>
@@ -1178,7 +1255,7 @@ async function submitAuth() {
     else {
       const p = S.pending;
       Object.assign(msg, { action: 'sign_tx', key_id: p.key_id, chain: p.chain, asset: p.asset, to: p.to, amount: p.amount });
-      if (p.chain === 'ETH') Object.assign(msg, { nonce: p.nonce, gas_price: p.gas_price, gas_limit: p.gas_limit });
+      if (isEvmChain(p.chain)) Object.assign(msg, { nonce: p.nonce, gas_price: p.gas_price, gas_limit: p.gas_limit });
       else {
         // 参考区块在签名前一刻获取，保证在后端时效校验范围内
         const blk = await tronPost('/wallet/getnowblock', {});
@@ -1225,7 +1302,7 @@ function openResult() {
   document.getElementById('resultTitle').textContent = '交易已签名';
   document.getElementById('resultError').textContent = '';
   document.getElementById('resultSummary').innerHTML = `
-    <dt>网络</dt><dd>${s.chain === 'ETH' ? 'Ethereum 主网' : 'TRON 主网'}</dd>
+    <dt>网络</dt><dd>${chainNameOf(s.chain)}</dd>
     <dt>金额</dt><dd><b>${esc(s.amount)} ${esc(s.asset)}</b></dd>
     <dt>收款地址</dt><dd class="mono selectable">${esc(s.to)}</dd>
     <dt>发送方</dt><dd class="mono selectable">${esc(s.from)}</dd>
@@ -1251,8 +1328,8 @@ async function broadcast() {
   if (!s) return;
   b.disabled = true; b.innerHTML = '<span class="spin">↻</span> 广播中…'; errEl.textContent = '';
   try {
-    if (s.chain === 'ETH') {
-      const hash = await ethRpc('eth_sendRawTransaction', [s.raw_tx_hex]);
+    if (isEvmChain(s.chain)) {
+      const hash = await evmRpc(s.chain, 'eth_sendRawTransaction', [s.raw_tx_hex]);
       if (hash && hash.toLowerCase() !== s.tx_id.toLowerCase()) throw new Error('节点返回的交易哈希与本地不一致：' + hash);
     } else {
       const r = await tronPost('/wallet/broadcasthex', { transaction: s.raw_tx_hex });
@@ -1300,7 +1377,8 @@ window.onWalletLoaded = function (wallet) {
   applyTheme(store.get('theme') || (systemDark.matches ? 'dark' : 'light'));
   const savedKey = store.get('keyId');
   if (savedKey && /^\d+$/.test(savedKey) && Number(savedKey) <= MAX_KEY_ID) S.keyId = Number(savedKey);
-  if (store.get('chain') === 'TRON') S.chain = 'TRON';
+  const savedChain = store.get('chain');
+  if (savedChain === 'TRON' || savedChain === 'BSC' || savedChain === 'ETH') S.chain = savedChain;
   S.asset = nativeOf(S.chain);
   renderAll();
   if (window.ipc) window.ipc.postMessage(JSON.stringify({ action: 'load_cache' }));

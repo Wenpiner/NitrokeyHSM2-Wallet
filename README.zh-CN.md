@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-把 Nitrokey HSM 2 当作 ETH / TRON 硬件钱包使用的桌面客户端。私钥在 HSM 芯片内生成、在芯片内签名，电脑上的软件只接触公钥和签名结果。
+把 Nitrokey HSM 2 当作 ETH / BSC / TRON 硬件钱包使用的桌面客户端。私钥在 HSM 芯片内生成、在芯片内签名，电脑上的软件只接触公钥和签名结果。
 
 > [!WARNING]
 > 这是个人业余项目，未经任何第三方安全审计，与 Nitrokey GmbH / CardContact 没有任何关联。
@@ -35,8 +35,8 @@ Ledger、Trezor、Keystone、OneKey 等专业硬件钱包会在**设备自己的
 ## 功能
 
 - 在 HSM 内创建 secp256k1 密钥，或导入设备中已有的密钥
-- 同一把密钥同时派生 ETH 地址（EIP-55）和 TRON 地址（Base58Check）
-- 查询余额与交易记录：ETH、USDT (ERC-20)、TRX、USDT (TRC-20)
+- 同一把密钥同时派生 ETH / BSC 地址（EIP-55）和 TRON 地址（Base58Check）
+- 查询余额与交易记录：ETH、USDT (ERC-20)、BNB、USDT (BEP-20)、TRX、USDT (TRC-20)
 - 构造转账、预估手续费（TRON 包括能量 / 带宽燃烧预估），硬件签名后由用户手动广播
 - Watch-only：查看余额不需要插入设备，只有创建、导入、签名时才需要 PIN
 - 签名前在设备上回读公钥并与本地缓存比对，防止用错密钥
@@ -126,14 +126,15 @@ pkcs11-tool --module /Library/OpenSC/lib/opensc-pkcs11.so --login \
 Rust 核心不发起任何网络请求。界面（WebView）直接访问以下公共服务，用于查询余额、交易记录和广播交易：
 
 - Ethereum：`ethereum-rpc.publicnode.com`、`eth.blockscout.com`
+- BSC：`bsc-rpc.publicnode.com`、`api.routescan.io`
 - TRON：`api.trongrid.io`
 
 这些服务能看到你查询的地址和你的 IP。如果在意，可以修改 `rust/src/ui/index.html` 顶部的常量，换成自建节点。
 
 ## 当前限制
 
-- 只支持 Ethereum 主网与 TRON 主网，资产仅 ETH / USDT / TRX / USDT
-- ETH 使用 Legacy (EIP-155) 交易，暂不支持 EIP-1559
+- 只支持 Ethereum 主网、BSC 主网与 TRON 主网，资产仅 ETH / BNB / TRX 与各链上的 USDT
+- ETH / BSC 使用 Legacy (EIP-155) 交易，暂不支持 EIP-1559
 - 只在 macOS 上测试过；Linux 未验证（需用 `--no-default-features` 关闭 `macos-pcsc`）
 - Android 只有 USB CCID 传输层原型，尚未接入完整应用
 - PC/SC 原生通道只是 OpenSC 缺失时的实验性回退，不支持导入 / 创建，请以 PKCS#11 为准

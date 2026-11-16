@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-A desktop client that turns a Nitrokey HSM 2 into an ETH / TRON hardware wallet. Private keys are generated and used for signing inside the HSM chip. The software on your computer only ever sees public keys and signatures.
+A desktop client that turns a Nitrokey HSM 2 into an ETH / BSC / TRON hardware wallet. Private keys are generated and used for signing inside the HSM chip. The software on your computer only ever sees public keys and signatures.
 
 > [!WARNING]
 > This is a personal hobby project. It has not been audited by any third party and is not affiliated with Nitrokey GmbH or CardContact.
@@ -35,8 +35,8 @@ Hardware wallets such as Ledger, Trezor, Keystone and OneKey parse and show the 
 ## Features
 
 - Create secp256k1 keys inside the HSM, or import keys already on the device
-- One key derives both an ETH address (EIP-55) and a TRON address (Base58Check)
-- Balances and history for ETH, USDT (ERC-20), TRX and USDT (TRC-20)
+- One key derives both an ETH / BSC address (EIP-55) and a TRON address (Base58Check)
+- Balances and history for ETH, USDT (ERC-20), BNB, USDT (BEP-20), TRX and USDT (TRC-20)
 - Build transfers and estimate fees (including TRON energy / bandwidth burn), sign on the hardware, then broadcast manually
 - Watch-only: viewing balances doesn't need the device; only create, import and sign ask for the PIN
 - Before signing, the public key is read back from the device and compared with the local cache, so the wrong key is never used
@@ -128,14 +128,15 @@ The key label is never stored or displayed, so remember it yourself. It guards a
 The Rust core makes no network requests. The UI (WebView) talks directly to these public services to fetch balances and history and to broadcast transactions:
 
 - Ethereum: `ethereum-rpc.publicnode.com`, `eth.blockscout.com`
+- BSC: `bsc-rpc.publicnode.com`, `api.routescan.io`
 - TRON: `api.trongrid.io`
 
 These services can see the addresses you query and your IP. If that matters to you, change the constants at the top of `rust/src/ui/index.html` to point at your own nodes.
 
 ## Current limitations
 
-- Ethereum mainnet and TRON mainnet only; assets limited to ETH / USDT / TRX / USDT
-- ETH uses Legacy (EIP-155) transactions; EIP-1559 is not supported yet
+- Ethereum mainnet, BSC mainnet and TRON mainnet only; assets limited to ETH / BNB / TRX and USDT on each chain
+- ETH / BSC use Legacy (EIP-155) transactions; EIP-1559 is not supported yet
 - Tested on macOS only; Linux is unverified (build with `--no-default-features` to drop `macos-pcsc`)
 - Android only has a USB CCID transport prototype, not a full app
 - The native PC/SC channel is an experimental fallback for when OpenSC is missing; it can't import or create keys, so treat PKCS#11 as the supported path

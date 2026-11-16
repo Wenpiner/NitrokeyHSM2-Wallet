@@ -77,6 +77,10 @@ pub fn finalize_eth_transaction(
 pub const ETH_USDT_CONTRACT: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 pub const ETH_MAINNET_CHAIN_ID: u64 = 1;
 
+/// BNB Smart Chain (BSC) 主网 USDT (BEP-20 Binance-Peg BSC-USD, 18 位小数)
+pub const BSC_USDT_CONTRACT: &str = "0x55d398326f99059fF775485246999027B3197955";
+pub const BSC_MAINNET_CHAIN_ID: u64 = 56;
+
 /// EIP-155 Legacy 交易字段，`to` 为 20 字节原始地址
 #[derive(Debug, Clone)]
 pub struct EthLegacyTx {
@@ -270,10 +274,52 @@ mod tests {
     #[test]
     fn address_parsing() {
         assert!(parse_eth_address(ETH_USDT_CONTRACT).is_ok());
+        assert!(parse_eth_address(BSC_USDT_CONTRACT).is_ok());
         assert!(parse_eth_address("0xdac17f958d2ee523a2206206994597c13d831ec7").is_ok());
         assert!(parse_eth_address("0xdAC17F958D2ee523a2206206994597C13D831EC7").is_err());
         assert!(parse_eth_address("dac17f958d2ee523a2206206994597c13d831ec7").is_err());
         assert!(parse_eth_address("0x1234").is_err());
+    }
+
+    #[test]
+    fn bsc_eip155_signing_and_finalize() {
+        let to = parse_eth_address(BSC_USDT_CONTRACT).unwrap();
+        let recipient = [0x11; 20];
+        let data = erc20_transfer_data(&recipient, 1_000_000_000_000_000_000); // 1 USDT (18 decimals)
+        let tx = EthLegacyTx {
+            nonce: 3,
+            gas_price_wei: 3_000_000_000, // 3 Gwei
+            gas_limit: 65_000,
+            to,
+            value_wei: 0,
+            data,
+            chain_id: BSC_MAINNET_CHAIN_ID,
+        };
+        let hash = eth_legacy_signing_hash(&tx);
+        let sk = SigningKey::from_bytes(&[0x46u8; 32].into()).unwrap();
+        let (sig, _) = sk.sign_prehash_recoverable(&hash).unwrap();
+        let sig = sig.normalize_s().unwrap_or(sig);
+        let mut r = [0u8; 32];
+        let mut s = [0u8; 32];
+        r.copy_from_slice(&sig.r().to_bytes());
+        s.copy_from_slice(&sig.s().to_bytes());
+        let expected_key = sk.verifying_key();
+        let v = (0..=1u8)
+            .find(|v| {
+                VerifyingKey::recover_from_prehash(&hash, &sig, RecoveryId::from_byte(*v).unwrap())
+                    .map(|k| &k == expected_key)
+                    .unwrap_or(false)
+            })
+            .unwrap();
+        let from = crate::crypto::address::public_key_to_eth_address(
+            expected_key.to_encoded_point(false).as_bytes(),
+        )
+        .unwrap();
+
+        let signed = eth_legacy_finalize(&tx, &EcdsaSignatureResult { r, s, v }, &from).unwrap();
+        assert!(signed.raw_tx_hex.starts_with("0x"));
+        assert!(signed.tx_hash.starts_with("0x"));
+        assert_eq!(signed.from, from);
     }
 
     #[test]

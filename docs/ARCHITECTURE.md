@@ -114,12 +114,12 @@ android/                     Android USB CCID 插件原型（Kotlin）
 
 ## 交易构造
 
-### Ethereum
+### Ethereum / BSC
 
-- Legacy 交易 + EIP-155，`chain_id = 1`，RLP 编码由 `chains/eth.rs` 手写
+- Legacy 交易 + EIP-155，ETH `chain_id = 1`、BSC `chain_id = 56`，RLP 编码由 `chains/eth.rs` 手写
 - 签名摘要：`keccak256(rlp([nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]))`
 - 最终 `v = chainId * 2 + 35 + recid`
-- ERC-20 转账：`to` 为 USDT 合约，`data = a9059cbb || pad32(收款地址) || pad32(数量)`
+- ERC-20 / BEP-20 转账：`to` 为对应链上的 USDT 合约（ETH 6 位精度、BSC 18 位精度），`data = a9059cbb || pad32(收款地址) || pad32(数量)`
 - 前端从 RPC 获取 `nonce`、`gasPrice`（加 20% 余量）、`estimateGas`；后端拒绝 `gas_limit > 10,000,000` 或 `gas_price > 500 Gwei`
 
 ### TRON
@@ -201,6 +201,8 @@ Rust 核心不发起任何网络请求。所有链上数据由 WebView 内的前
 |---|---|
 | ETH 余额、nonce、gasPrice、estimateGas、广播 | `https://ethereum-rpc.publicnode.com`（JSON-RPC） |
 | ETH 交易记录 | `https://eth.blockscout.com/api/v2` |
+| BSC 余额、nonce、gasPrice、estimateGas、广播、日志回退 | `https://bsc-rpc.publicnode.com`（JSON-RPC） |
+| BSC 交易记录 | `https://api.routescan.io/v2/network/mainnet/evm/56/etherscan/api` |
 | TRON 余额、资源、参考区块、交易记录、广播 | `https://api.trongrid.io` |
 
 这些服务能看到你的 IP 与查询的地址。签名需要的链上参数（nonce、gas、参考区块）都来自这些服务，后端只做范围校验，不能验证它们是否真实。

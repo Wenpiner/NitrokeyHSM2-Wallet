@@ -269,7 +269,14 @@ fn sign_tx(
     let pubkey = hex::decode(&slot.public_key_hex)?;
 
     match params.chain.as_str() {
-        "ETH" => {
+        "ETH" | "BSC" => {
+            let is_bsc = params.chain == "BSC";
+            let (chain_id, native_symbol, usdt_contract, usdt_decimals) = if is_bsc {
+                (BSC_MAINNET_CHAIN_ID, "BNB", BSC_USDT_CONTRACT, 18)
+            } else {
+                (ETH_MAINNET_CHAIN_ID, "ETH", ETH_USDT_CONTRACT, 6)
+            };
+
             let nonce = parse_u64_hex_or_dec(params.nonce.as_ref().ok_or_else(|| anyhow!("缺少 nonce"))?)?;
             let gas_price_wei = parse_u128_hex_or_dec(params.gas_price.as_ref().ok_or_else(|| anyhow!("缺少 gas_price"))?)?;
             let gas_limit = parse_u64_hex_or_dec(params.gas_limit.as_ref().ok_or_else(|| anyhow!("缺少 gas_limit"))?)?;
@@ -283,17 +290,17 @@ fn sign_tx(
             }
 
             let (to, value_wei, data) = match params.asset.as_str() {
-                "ETH" => {
+                a if a == native_symbol => {
                     let value = parse_amount(&params.amount, 18)?;
                     (parse_eth_address(&params.to)?, value, vec![])
                 }
                 "USDT" => {
-                    let value = parse_amount(&params.amount, 6)?;
+                    let value = parse_amount(&params.amount, usdt_decimals)?;
                     let to_addr = parse_eth_address(&params.to)?;
                     let data = erc20_transfer_data(&to_addr, value);
-                    (parse_eth_address(ETH_USDT_CONTRACT)?, 0, data)
+                    (parse_eth_address(usdt_contract)?, 0, data)
                 }
-                _ => return Err(anyhow!("不支持的 ETH 资产: {}", params.asset)),
+                _ => return Err(anyhow!("不支持的 {} 资产: {}", params.chain, params.asset)),
             };
 
             let tx = EthLegacyTx {
@@ -303,14 +310,14 @@ fn sign_tx(
                 to,
                 value_wei,
                 data,
-                chain_id: ETH_MAINNET_CHAIN_ID,
+                chain_id,
             };
 
             let signing_hash = eth_legacy_signing_hash(&tx);
             let sig = hardware_sign(open_backend(key_label, pin)?, key_label, slot.key_id, pin, &signing_hash, &pubkey)?;
             let result = eth_legacy_finalize(&tx, &sig, &slot.eth_address)?;
 
-            println!("✅ [ETH 签名] {} {} → {}", params.amount, params.asset, params.to);
+            println!("✅ [{} 签名] {} {} → {}", params.chain, params.amount, params.asset, params.to);
             println!("   TxHash: {}", result.tx_hash);
 
             Ok(SignedTxResult {

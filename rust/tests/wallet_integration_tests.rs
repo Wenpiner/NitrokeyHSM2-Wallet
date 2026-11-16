@@ -173,6 +173,42 @@ fn test_full_eth_signing_flow() {
 }
 
 #[test]
+fn test_full_bsc_legacy_signing_flow() {
+    let mut transport = MockTransport::default();
+    transport.connect().unwrap();
+
+    let mut client = SmartCardHsmClient::new(transport);
+    client.select_applet().unwrap();
+    let slot1 = client.get_slot_public_key(1).unwrap();
+    let expected_eth_address = public_key_to_eth_address(&slot1.public_key_uncompressed).unwrap();
+
+    let to_addr = parse_eth_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap();
+    let usdt_amount = parse_amount("25.5", 18).unwrap(); // BSC USDT 为 18 位精度
+    let tx = EthLegacyTx {
+        nonce: 7,
+        gas_price_wei: 3_000_000_000,
+        gas_limit: 65_000,
+        to: parse_eth_address(BSC_USDT_CONTRACT).unwrap(),
+        value_wei: 0,
+        data: erc20_transfer_data(&to_addr, usdt_amount),
+        chain_id: BSC_MAINNET_CHAIN_ID,
+    };
+
+    let msg_hash = eth_legacy_signing_hash(&tx);
+    let mut session = SignSessionManager::new(&mut client);
+    let sig = session.execute_signing(
+        1,
+        &msg_hash,
+        &slot1.public_key_uncompressed,
+        SafePin::new("648219"),
+    ).unwrap();
+
+    let finalized = eth_legacy_finalize(&tx, &sig, &expected_eth_address).unwrap();
+    assert_eq!(finalized.from.to_lowercase(), expected_eth_address.to_lowercase());
+    assert!(finalized.raw_tx_hex.starts_with("0x"));
+}
+
+#[test]
 fn test_full_tron_trc20_signing_flow() {
     let mut transport = MockTransport::default();
     transport.connect().unwrap();
